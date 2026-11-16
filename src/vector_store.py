@@ -2,7 +2,7 @@
 
 The factory functions configure Ollama embeddings, persistent storage, and
 retrieval. embeddings, vector_store, and retriever are shared instances
-created at import time; an absent or empty database directory triggers CSV
+created on first access; an absent or empty database directory triggers CSV
 loading, remote embedding requests, and persistent index writes.
 """
 
@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import pandas as pd
+from chromadb.config import Settings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 from langchain_core.vectorstores import VectorStoreRetriever
@@ -73,6 +74,8 @@ def init_vector_store(
         collection_name=collection_name,
         persist_directory=str(db_path),
         embedding_function=embeddings,
+        collection_metadata={"hnsw:space": "cosine"},
+        client_settings=Settings(anonymized_telemetry=False),
     )
 
     if needs_ingestion:
@@ -140,12 +143,19 @@ def get_vector_store(
 def get_retriever(
     k: int = config.RETRIEVER_K,
     vector_store: Optional[Chroma] = None,
+    *,
+    franchise: Optional[str] = None,
+    location: Optional[str] = None,
+    min_rating: Optional[int] = None,
 ) -> VectorStoreRetriever:
     """Create a similarity retriever over the supplied or configured store.
 
     Args:
         k: Maximum number of nearest review documents to retrieve per query.
         vector_store: Existing Chroma store, or None to initialize the default.
+        franchise: Exact franchise metadata match, or None for any franchise.
+        location: Exact location match, or None for any location.
+        min_rating: Inclusive minimum star rating from 1 to 5, or None.
 
     Returns:
         A VectorStoreRetriever whose invoke method accepts a query string.
@@ -155,13 +165,41 @@ def get_retriever(
     """
     if vector_store is None:
         vector_store = init_vector_store()
-    return vector_store.as_retriever(search_kwargs={"k": k})
+    if k < 1:
+        raise ValueError("k must be positive")
+    clauses = []
+    if franchise:
+        clauses.append({"Franchise": franchise})
+    if location:
+        clauses.append({"Location": location})
+    if min_rating is not None:
+        if not 1 <= min_rating <= 5:
+            raise ValueError("min_rating must be between 1 and 5")
+        clauses.append({"Rating": {"$gte": min_rating}})
+    kwargs = {"k": k}
+    if clauses:
+        kwargs["filter"] = clauses[0] if len(clauses) == 1 else {"$and": clauses}
+    return vector_store.as_retriever(search_kwargs=kwargs)
 
 
-# Module-level instances for direct import compatibility
-embeddings = get_embeddings()
-vector_store = init_vector_store(embeddings=embeddings)
-retriever = get_retriever(vector_store=vector_store)
+# Resolve legacy shared exports on demand; FastAPI owns its own lifespan resources.
+from functools import lru_cache
+
+
+@lru_cache(maxsize=1)
+def _shared_resources():
+    """Create and cache the legacy CLI embedding/store/retriever tuple."""
+    embedding_client = get_embeddings()
+    store = init_vector_store(embeddings=embedding_client)
+    return embedding_client, store, get_retriever(vector_store=store)
+
+
+def __getattr__(name):
+    """Lazily expose legacy shared clients without initializing on import."""
+    names = ("embeddings", "vector_store", "retriever")
+    if name not in names:
+        raise AttributeError(name)
+    return _shared_resources()[names.index(name)]
 
 __all__ = [
     "get_embeddings",

@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Explore Auckland pizza reviews with local, evidence-backed answers.">
+<title>PizzaLover — A slice of local knowledge</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🍕%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/styles.css">
+<script defer src="/static/app.js">
+</script>
+</head>
+<body>
+<header class="topbar">
+<a class="brand" href="/" aria-label="PizzaLover home">
+<span class="brand-icon">◔</span> Pizza<span>Lover</span>
+<span class="edition">AUCKLAND EDITION</span>
+</a>
+<div class="local">
+<i>
+</i> Local models. Local knowledge.</div>
+<button id="new-chat" class="subtle">＋ New chat</button>
+</header>
+<main class="workspace">
+<aside class="sidebar">
+<div class="section-label">MAKE IT YOUR SLICE</div>
+<h2>Explore the reviews</h2>
+<p class="muted">Narrow the evidence behind your next answer.</p>
+<form id="filters">
+<label for="franchise">Franchise</label>
+<select id="franchise">
+<option value="">All franchises</option>
+</select>
+<label for="location">Location</label>
+<select id="location">
+<option value="">All Auckland locations</option>
+</select>
+<label for="rating">Minimum rating</label>
+<select id="rating">
+<option value="">Any rating</option>
+<option value="3">★★★ & up</option>
+<option value="4">★★★★ & up</option>
+<option value="5">★★★★★ only</option>
+</select>
+<button id="reset-filters" type="button" class="text-button">Reset filters ↺</button>
+</form>
+<div class="divider">
+</div>
+<div class="toggle-row">
+<div>
+<h3>Ragas auto-evaluation</h3>
+<p class="muted small">A quality check after every answer</p>
+</div>
+<label class="switch">
+<input id="eval" type="checkbox" checked aria-label="Enable automatic Ragas evaluation">
+<span>
+</span>
+</label>
+</div>
+<p class="small muted">Scored on your machine. Evaluation may take a little longer.</p>
+<section class="quality">
+<div class="section-label">SESSION QUALITY <span id="session-count">0 turns</span>
+</div>
+<div id="session-summary" class="small muted">Your evaluated answers will build a picture here.</div>
+<button id="save-history" class="secondary">↓ Save evaluation history</button>
+<p id="save-status" class="small" role="status">
+</p>
+</section>
+<details class="ingestion">
+<summary>Add customer reviews</summary>
+<p class="small muted">Upload a CSV with Feedback_ID, Franchise, Location, Rating, and Comment.</p>
+<input type="file" id="csv-file" accept=".csv,text/csv" aria-label="Customer review CSV">
+<button id="upload" class="secondary">Upload reviews</button>
+<p id="upload-status" class="small" role="status">
+</p>
+</details>
+<div class="sidebar-bottom">
+<span class="status-dot">
+</span>
+<span id="corpus-count">Connecting to review index…</span>
+<p>Ollama · Chroma · Ragas</p>
+</div>
+</aside>
+<section class="chat-pane" aria-label="Pizza review chat">
+<div class="chat-heading">
+<span>THE REVIEW TABLE</span>
+<span class="small muted">Answers with receipts</span>
+</div>
+<div id="conversation" class="conversation">
+<section id="welcome" class="welcome">
+<div class="pizza-art" aria-hidden="true">
+<span>✦</span>🍕<span>✦</span>
+</div>
+<div class="eyebrow">GOOD PIZZA STARTS WITH GOOD INTEL</div>
+<h1>Find your next<br>
+<em>favourite slice.</em>
+</h1>
+<p>Ask about Auckland's pizza spots. Get answers<br class="desktop"> grounded in real customer reviews.</p>
+<div class="chips">
+<button>Which pizza franchise has the best pepperoni?<span>↗</span>
+</button>
+<button>What do customers think about Georgies Pizza across branches?<span>↗</span>
+</button>
+<button>Is the service fast at Dominoes?<span>↗</span>
+</button>
+<button>Which location has the highest rated restaurants?<span>↗</span>
+</button>
+</div>
+<div class="welcome-note">⌁ &nbsp; Your questions stay local. Every claim has a source.</div>
+</section>
+</div>
+<div class="composer-wrap">
+<div id="chat-status" class="small muted" role="status">Ready when you are.</div>
+<form id="chat-form" class="composer">
+<textarea id="question" placeholder="Ask anything about the pizza reviews…" rows="1" maxlength="4000" aria-label="Your question" required>
+</textarea>
+<button id="send" type="submit" aria-label="Send question">↑</button>
+<button id="stop" type="button" hidden>Stop</button>
+</form>
+<div class="composer-note">Evidence from the top 3 matching reviews · Each question is independent</div>
+</div>
+</section>
+<aside class="evidence-pane" aria-label="Evidence and evaluation">
+<div class="evidence-heading">
+<div>
+<div class="section-label">BEHIND THE ANSWER</div>
+<h2>The evidence</h2>
+</div>
+<span id="review-count" class="count-pill">0 reviews</span>
+</div>
+<div id="evidence-empty" class="empty-evidence">
+<span>▤</span>
+<h3>Real reviews. Clear sources.</h3>
+<p>The reviews behind your answer will appear here. Tap a citation to find its source.</p>
+</div>
+<div id="reviews">
+</div>
+<section class="scorecard">
+<div class="section-label">TURN QUALITY <span class="tag">RAGAS</span>
+</div>
+<h3>A little transparency.</h3>
+<p id="score-status" class="small muted">Four ways to check an answer's quality.</p>
+<div id="scores">
+</div>
+<p class="small muted score-note">Scores reflect the selected answer. A score is a signal, not a guarantee.</p>
+</section>
+<details id="golden">
+<summary>Latest golden benchmark</summary>
+<div id="golden-summary" class="small muted">No saved benchmark available.</div>
+</details>
+</aside>
+</main>
+<div id="connection-error" class="connection-error" role="alert" hidden>
+</div>
+</body>
+</html>

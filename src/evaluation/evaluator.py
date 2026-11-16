@@ -11,11 +11,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
+import httpx
 import numpy as np
 import pandas as pd
+from instructor import Mode
 from openai import AsyncOpenAI
 from ragas import EvaluationDataset, SingleTurnSample, evaluate
 from ragas.llms import llm_factory
+from ragas.run_config import RunConfig
 from ragas.metrics._answer_relevance import AnswerRelevancy
 from ragas.metrics._context_precision import (
     ContextUtilization,
@@ -57,10 +60,13 @@ class RAGEvaluator:
         self.client = AsyncOpenAI(
             base_url=f"{ollama_base_url}/v1",
             api_key="ollama",
+            # Ragas' synchronous API creates fresh event loops for each call.
+            # Avoid reusing connections bound to a previous, closed loop.
+            http_client=httpx.AsyncClient(limits=httpx.Limits(max_keepalive_connections=0)),
         )
 
         # ── evaluator LLM (used by RAGAS to judge faithfulness, etc.) ──
-        self.evaluator_llm = llm_factory(llm_model, client=self.client)
+        self.evaluator_llm = llm_factory(llm_model, client=self.client, mode=Mode.JSON_SCHEMA)
 
         # ── evaluator embeddings (used by answer-relevancy metric) ──
         self.evaluator_embeddings = OllamaRagasEmbeddings(
@@ -126,6 +132,7 @@ class RAGEvaluator:
             embeddings=self.evaluator_embeddings,
             raise_exceptions=False,
             show_progress=False,
+            run_config=RunConfig(max_workers=1, timeout=300, max_retries=2),
         )
 
         scores = {
@@ -193,6 +200,7 @@ class RAGEvaluator:
             embeddings=self.evaluator_embeddings,
             raise_exceptions=False,
             show_progress=True,
+            run_config=RunConfig(max_workers=1, timeout=300, max_retries=2),
         )
         return result.to_pandas()
 

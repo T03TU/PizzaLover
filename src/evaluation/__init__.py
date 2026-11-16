@@ -3,7 +3,7 @@
 RAGEvaluator scores responses; OllamaRagasEmbeddings adapts embedding calls.
 PERSONAS and SEED_SYNTHETIC_TESTSET describe generation roles and fallback
 cases. load_or_generate_golden_dataset and save_golden_dataset manage caches.
-Importing this subpackage also runs the parent src package initialization.
+The parent src package resolves its shared generation/retrieval clients lazily.
 """
 
 from src.evaluation.embeddings_adapter import OllamaRagasEmbeddings

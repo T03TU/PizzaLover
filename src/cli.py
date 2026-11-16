@@ -1,34 +1,19 @@
 """Provide interactive pizza-review answers with optional Ragas evaluation.
 
 main builds a generation chain and uses the shared retriever for evidence.
-The module-level model, template, prompt, and chain retain a directly
-importable generation setup; main uses its own build_rag_chain instances.
-Importing the shared vector store can initialize and ingest the review index.
+The shared prompt builder formats review metadata and citations consistently
+with the web API. Importing the legacy retriever initializes the review index.
 """
 
 from time import perf_counter
 
 import numpy as np
-from langchain_ollama.llms import OllamaLLM
-from langchain_core.prompts import ChatPromptTemplate
 
 from src.evaluation.evaluator import RAGEvaluator
 from src.rag_chain import build_rag_chain
 from src.vector_store import retriever
 
 
-model = OllamaLLM(model="llama3.2", base_url="http://localhost:11434")
-
-template = """
-Your are an expert in answering questions about a pizza restaurant
-
-Here are some relevant reviews: {reviews}
-
-Here is the question: {question}
-"""
-
-prompt = ChatPromptTemplate.from_template(template)
-chain = prompt | model
 
 def main() -> None:
     """Run the interactive question-answering and evaluation session.

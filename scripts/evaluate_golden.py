@@ -13,9 +13,11 @@ from time import perf_counter
 
 import numpy as np
 import pandas as pd
+from instructor import Mode
 from openai import AsyncOpenAI
 from ragas import EvaluationDataset, SingleTurnSample, evaluate
 from ragas.llms import llm_factory
+from ragas.run_config import RunConfig
 from ragas.metrics._answer_correctness import AnswerCorrectness
 from ragas.metrics._answer_relevance import AnswerRelevancy
 from ragas.metrics._answer_similarity import AnswerSimilarity
@@ -147,7 +149,7 @@ def run_golden_evaluation(force_regenerate: bool = False, limit: int = None):
     print("-" * 72)
 
     client = AsyncOpenAI(base_url=f"{config.OLLAMA_BASE_URL}/v1", api_key="ollama")
-    evaluator_llm = llm_factory(config.LLM_MODEL, client=client)
+    evaluator_llm = llm_factory(config.LLM_MODEL, client=client, mode=Mode.JSON_SCHEMA)
     evaluator_embeddings = OllamaRagasEmbeddings(client=client, model=config.EMBEDDING_MODEL)
 
     metrics = build_evaluator_metrics(evaluator_llm, evaluator_embeddings)
@@ -161,6 +163,7 @@ def run_golden_evaluation(force_regenerate: bool = False, limit: int = None):
         embeddings=evaluator_embeddings,
         raise_exceptions=False,
         show_progress=True,
+        run_config=RunConfig(max_workers=1, timeout=300, max_retries=2),
     )
     eval_duration = perf_counter() - eval_start
 

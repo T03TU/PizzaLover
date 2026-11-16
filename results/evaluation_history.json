@@ -1,13 +1,13 @@
 [
   {
-    "timestamp": "2026-11-16T15:57:48.186071",
-    "question": "which pizza franchise is trending?",
-    "answer": "Based on the reviews, it seems that Georgies Pizza is trending. Both of the Georgies Pizza reviews have a 5-star rating, and they mention the same key phrase: \"Best local gourmet pizzas with fresh top",
+    "timestamp": "2026-11-16T18:12:56.995469",
+    "question": "Which pizza franchise has the best pepperoni?",
+    "answer": "Based on the review evidence, it appears that Sals has the best pepperoni, as all three reviews mention it as the \"best pepperoni in town\". The location of these reviews is not directly related to the",
     "scores": {
-      "faithfulness": null,
-      "answer_relevancy": 0.0,
-      "llm_context_precision_without_reference": 1.0,
-      "context_utilization": 1.0
+      "faithfulness": 0.75,
+      "answer_relevancy": 0.8249,
+      "llm_context_precision_without_reference": 0.0,
+      "context_utilization": 0.0
     }
   }
 ]

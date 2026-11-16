@@ -5,4 +5,10 @@ ragas
 pandas
 numpy
 rapidfuzz
-openai
+openai>=2,<3
+fastapi>=0.115
+uvicorn[standard]
+pydantic>=2
+python-multipart
+instructor>=1.7
+httpx

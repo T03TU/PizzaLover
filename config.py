@@ -27,13 +27,20 @@ Attributes:
         ~/.cache/tiktoken; also written into os.environ.
 
 Notes:
-    Importing this module creates data, raw/synthetic data, results, docs,
+    Importing this module disables Ragas/Chroma telemetry and hosted LangSmith
+    tracing, and creates data, raw/synthetic data, results, docs,
     tests, and fixture directories if missing. An invalid RETRIEVER_K value
     raises ValueError during import.
 """
 
 import os
 from pathlib import Path
+
+# Keep review/question data and usage telemetry on this machine.
+os.environ["RAGAS_DO_NOT_TRACK"] = "true"
+os.environ["ANONYMIZED_TELEMETRY"] = "false"
+os.environ["LANGCHAIN_TRACING_V2"] = "false"
+os.environ["LANGSMITH_TRACING"] = "false"
 
 # ── Base Directories ──
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -65,6 +72,9 @@ CHROMA_DB_DIR = DATA_DIR / "chroma_db"
 TEST_DATASET_PATH = FIXTURES_DIR / "pizza_feedback_50_entries.csv"
 LEGACY_RAW_DATA_PATH = PROJECT_ROOT / "test-dataset" / "pizza_feedback_50_entries.csv"
 LEGACY_CHROMA_DB_DIR = PROJECT_ROOT / "chrome_langchain_db"
+# Reuse the legacy index when it exists and the canonical index is absent.
+if not CHROMA_DB_DIR.exists() and LEGACY_CHROMA_DB_DIR.exists():
+    CHROMA_DB_DIR = LEGACY_CHROMA_DB_DIR
 
 # ── Results & Reports Paths ──
 EVALUATION_HISTORY_PATH = RESULTS_DIR / "evaluation_history.json"

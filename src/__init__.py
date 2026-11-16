@@ -1,21 +1,16 @@
-"""Expose the pizza RAG package's shared retrieval and generation API.
+"""Pizza RAG public API with lazy resources to avoid import-time indexing."""
 
-Exports prompt, model, chain, and build_rag_chain from rag_chain, plus
-vector_store, retriever, get_vector_store, and get_retriever from vector_store.
-Importing this package constructs shared clients and opens the review index;
-first-time indexing requires review data and reachable Ollama embeddings.
-"""
+from importlib import import_module
 
-from src.rag_chain import build_rag_chain, chain, model, prompt
-from src.vector_store import get_retriever, get_vector_store, retriever, vector_store
+import config  # Apply local-only telemetry and cache settings before engine imports.
 
-__all__ = [
-    "retriever",
-    "vector_store",
-    "get_retriever",
-    "get_vector_store",
-    "chain",
-    "prompt",
-    "model",
-    "build_rag_chain",
-]
+__all__ = ["retriever", "vector_store", "get_retriever", "get_vector_store",
+           "chain", "prompt", "model", "build_rag_chain"]
+
+
+def __getattr__(name):
+    """Resolve legacy exports only when requested, without eager index creation."""
+    if name not in __all__:
+        raise AttributeError(name)
+    module = "vector_store" if name in __all__[:4] else "rag_chain"
+    return getattr(import_module(f"src.{module}"), name)
