@@ -152,9 +152,16 @@ If an uploaded CSV or XLSX has different column names (or extra columns), a
 **Map review columns** dialog asks which source column supplies each of the five
 schema fields. Sample values help identify the right columns. All fields must
 map to distinct source columns; extra columns are ignored. Canceling stores
-nothing. Mapping renames fields only: IDs must still start with `FB-`, ratings
+nothing. Mapping renames fields only: External file IDs are automatically converted to stable schema IDs; ratings
 must be 1–5, and all existing validation/duplicate checks still apply.
 `POST /api/ingest/preview` accepts a multipart `file` and returns columns, up to
 three sample rows, row count, and `requires_mapping`, without embedding. To import
 custom columns, send the original file to `/api/ingest` with a multipart `mapping`
 field containing a JSON object of schema-field names to source-column names.
+
+File uploads preserve valid `FB-` IDs of at most 64 characters. Other nonempty
+text or integer IDs (including long Google review IDs) become deterministic
+`FB-EXT-` hashes, so repeated imports retain duplicate detection. Original IDs
+are not truncated or added as extra schema fields. Missing IDs still fail
+validation. This normalization applies to CSV/XLSX uploads, including mapped
+columns; the JSON API retains strict schema validation.

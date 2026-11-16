@@ -188,7 +188,13 @@ async def read_reviews(request, inspect=False):
             rows = payload if isinstance(payload, list) else [payload]
         if not rows or len(rows) > 500:
             raise HTTPException(422, "Provide between 1 and 500 reviews")
-        reviews = [Review.model_validate(row) for row in rows]
+        reviews = []
+        for index, row in enumerate(rows, start=1):
+            try:
+                reviews.append(Review.model_validate(row))
+            except ValidationError as exc:
+                issues = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
+                raise HTTPException(422, f"Review {index}: {issues}. Correct the file or column mapping and retry.") from exc
         ids = [r.Feedback_ID for r in reviews]
         if len(set(ids)) != len(ids):
             raise HTTPException(409, "Feedback_ID values must be unique within an upload")

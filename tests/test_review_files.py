@@ -10,7 +10,7 @@ from openpyxl import Workbook
 from starlette.requests import Request
 
 from api.server import ingest, preview_ingestion
-from src.review_files import parse_review_file
+from src.review_files import parse_review_file, normalize_feedback_id
 
 HEADER = ['Feedback_ID', 'Franchise', 'Location', 'Rating', 'Comment']
 ROW = ['FB-901', 'Pizza shop', 'Auckland', 5, 'Great pizza']
@@ -27,6 +27,21 @@ def xlsx(rows):
 
 
 class FileTests(unittest.TestCase):
+    def test_external_ids_are_short_stable_and_distinct(self):
+        from api.schemas import Review
+        external = 'Ci9DQUlRQUNvZENodHljRjlv' * 12
+        normalized = normalize_feedback_id(external)
+        self.assertLessEqual(len(normalized), 64)
+        self.assertEqual(normalized, normalize_feedback_id(' ' + external + ' '))
+        self.assertNotEqual(normalized, normalize_feedback_id(external + 'different'))
+        self.assertEqual(normalize_feedback_id('FB-901'), 'FB-901')
+        self.assertEqual(normalize_feedback_id(123), normalize_feedback_id('123'))
+        self.assertIsNone(normalize_feedback_id(None))
+        self.assertEqual(normalize_feedback_id(''), '')
+        csv = (','.join(HEADER) + '\n' + ','.join(map(str, [external] + ROW[1:]))).encode()
+        parsed = parse_review_file('reviews.csv', csv)[0]
+        self.assertEqual(Review.model_validate(parsed).Feedback_ID, normalized)
+
     def test_csv_and_excel_match(self):
         csv = (','.join(HEADER) + '\n' + ','.join(map(str, ROW)) + '\n').encode()
         expected = dict(zip(HEADER, ROW))
@@ -81,6 +96,25 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
             return function(*args, **kwargs)
         with patch('api.server.asyncio.to_thread', side_effect=inline):
             return await (preview_ingestion(request) if preview else ingest(request))
+
+    async def test_long_external_id_ingest_and_duplicate(self):
+        stored = []
+        store = SimpleNamespace(get=lambda **kwargs: {'metadatas': [d.metadata for d in stored]},
+                                add_documents=lambda docs, ids: stored.extend(docs))
+        self.app = SimpleNamespace(state=SimpleNamespace(engine=SimpleNamespace(store=store), model_lock=asyncio.Lock()))
+        columns = ['external', 'shop', 'city', 'stars', 'text']
+        rows = [columns, ['Ci9DQUlRQUNvZENodHljRjlv' * 12] + ROW[1:]]
+        mapping = dict(zip(HEADER, columns))
+        self.assertEqual(await self.submit(rows, mapping=mapping), {'added': 1})
+        self.assertTrue(stored[0].metadata['Feedback_ID'].startswith('FB-EXT-'))
+        with self.assertRaises(HTTPException) as duplicate:
+            await self.submit(rows, mapping=mapping)
+        self.assertEqual(duplicate.exception.status_code, 409)
+        with self.assertRaises(HTTPException) as invalid:
+            await self.submit([columns, ['new-id'] + ROW[1:3] + [9, 'Invalid']], mapping=mapping)
+        self.assertIn('Review 1: Rating:', invalid.exception.detail)
+        self.assertNotIn('pydantic.dev', invalid.exception.detail)
+        self.assertEqual(len(stored), 1)
 
     async def test_mapped_upload_and_preview(self):
         stored = []

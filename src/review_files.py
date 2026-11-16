@@ -1,6 +1,8 @@
 """Parse bounded review spreadsheets before any embeddings are requested."""
 
 import csv
+import hashlib
+import re
 import io
 from pathlib import Path
 from zipfile import BadZipFile, ZipFile
@@ -46,6 +48,18 @@ def parse_review_file(filename, content, mapping=None, inspect=False):
         raise ValueError("Invalid .xlsx workbook") from exc
 
 
+def normalize_feedback_id(value):
+    """Preserve schema IDs; hash nonempty external IDs without lossy truncation."""
+    if isinstance(value, (str, int)) and not isinstance(value, bool):
+        text = str(value).strip()
+        if not text:
+            return value
+        if len(text) <= 64 and re.fullmatch(r"FB-[A-Za-z0-9-]+", text):
+            return text
+        return "FB-EXT-" + hashlib.sha256(text.encode("utf-8")).hexdigest()[:56]
+    return value
+
+
 def read_table(table, mapping=None, inspect=False):
     """Read unique named columns, optionally mapping schema fields to source names."""
     header = next(table, None)
@@ -71,7 +85,12 @@ def read_table(table, mapping=None, inspect=False):
             raise ValueError(f"Row {line} contains more values than column headers")
         # Excel omits empty trailing cells; validation rejects missing required values.
         source = dict(zip(header, list(values) + [None] * (len(header) - len(values))))
-        rows.append(source if inspect else {target: source[column] for target, column in mapping.items()})
+        if inspect:
+            rows.append(source)
+        else:
+            row = {target: source[column] for target, column in mapping.items()}
+            row["Feedback_ID"] = normalize_feedback_id(row["Feedback_ID"])
+            rows.append(row)
     if inspect:
         return {"columns": header, "sample": rows[:3], "row_count": len(rows),
                 "requires_mapping": set(header) != COLUMNS or len(header) != len(COLUMNS)}
