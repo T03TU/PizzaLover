@@ -1,13 +1,13 @@
 [
   {
-    "timestamp": "2026-11-16T19:09:22.163383",
-    "question": "what is the best pizza place in auckland?",
-    "answer": "I'd be happy to help you with your question about the best pizza place in Auckland! Based on the review evidence provided, it seems that The Master & Margherita is a top contender. Both reviews [FB-EX",
+    "timestamp": "2026-11-16T23:47:36.408207",
+    "question": "what is the best pizza place in auckland city?",
+    "answer": "Based on the provided review evidence, it appears that The Master & Margherita is a highly recommended pizza destination in Auckland. Both reviews from [FB-EXT-e368d180fa3f2848f3168089ab5db56b8650c794",
     "scores": {
-      "faithfulness": null,
-      "answer_relevancy": 1.0,
-      "llm_context_precision_without_reference": 0.0,
-      "context_utilization": 0.0
+      "faithfulness": 0.4,
+      "answer_relevancy": 0.0,
+      "llm_context_precision_without_reference": 0.5,
+      "context_utilization": 0.5
     }
   }
 ]
