@@ -1,0 +1,8 @@
+langchain
+langchain-ollama
+langchain-chroma
+ragas
+pandas
+numpy
+rapidfuzz
+openai

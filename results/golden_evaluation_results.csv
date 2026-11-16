@@ -1,0 +1,52 @@
+user_input,retrieved_contexts,reference_contexts,response,reference,faithfulness,answer_relevancy,context_precision,context_recall,answer_correctness,answer_similarity
+What is the truffle mushroom pizza like at Georgies Pizza in South Auckland?,"['The truffle mushroom pizza is out of this world.', 'The truffle mushroom pizza is out of this world.', 'The truffle mushroom pizza is out of this world.']","['The truffle mushroom pizza is out of this world.', 'A bit pricey, but totally worth every cent.']","Based on the reviews, it's clear that the truffle mushroom pizza at Georgies Pizza is extremely popular and well-loved! All three reviewers who mentioned the pizza gave it a high rating, with two of them (Reviews 0 and 32) giving it a perfect score of 5 out of 5.
+
+The common thread among these reviews is the phrase ""out of this world,"" which suggests that the pizza is exceptionally delicious and exceeds expectations. There's no negative feedback to speak of, which further emphasizes the high quality of the truffle mushroom pizza at Georgies Pizza in South Auckland.
+
+Overall, if you're looking for a pizza that's truly exceptional, the truffle mushroom pizza at Georgies Pizza in South Auckland is definitely worth trying!","The truffle mushroom pizza at Georgies Pizza in South Auckland is rated 4 to 5 stars and described as 'out of this world', though customers note it can be a bit pricey but worth every cent.",,,,0.75,,0.9351223240214397
+Which restaurant in North Shore offers authentic Italian pizza with fresh basil and mozzarella?,"['Best local gourmet pizzas with fresh toppings!', 'Best local gourmet pizzas with fresh toppings!', 'Atmosphere is lovely, pizza tastes like Naples.']","['Atmosphere is lovely, pizza tastes like Naples.', 'Fresh basil and perfect mozzarella balance.', 'Slightly longer wait times, but high quality.']","Based on the reviews provided, I can see that Italianos is the restaurant in North Shore that offers authentic Italian pizza. The review from customer 1 mentions that the pizza tastes like Naples, which suggests that it is made with traditional Italian ingredients such as fresh basil and mozzarella.","Italianos on the North Shore offers pizza that 'tastes like Naples' with fresh basil and a perfect mozzarella balance, though it has slightly longer wait times.",,,,1.0,,0.8078049140521639
+Where can I find large portion sizes and authentic New York style pepperoni slices?,"['Huge portions, best pepperoni in town.', 'Huge portions, best pepperoni in town.', 'Huge portions, best pepperoni in town.']","['Huge portions, best pepperoni in town.', 'Amazing authentic New York style slices!', 'Quick service and piping hot pizza.']","Based on the reviews, it appears that Sals has large portion sizes, as mentioned in the reviews from Document 'review_18', 'review_24', and 'review_48'. All three reviewers praised the ""Huge portions"" at Sals.
+
+As for authentic New York-style pepperoni slices, all three reviewers mentioned that Sals has the ""best pepperoni in town"", which suggests that Sals is serving high-quality, authentic pepperoni slices that are reminiscent of New York-style pizza.
+
+So, to answer your question, you can find large portion sizes and authentic New York-style pepperoni slices at Sals, whether you're in South Auckland, Westcity, or Downtown.","Sal's in Westcity and Downtown is known for huge portions and the 'best pepperoni in town', featuring authentic New York style slices and piping hot quick service.",,,,0.0,,0.8348437764576403
+How does Dominoes compare in service speed and value for a quick family dinner?,"['Quick service and piping hot pizza.', 'Quick service and piping hot pizza.', 'Quick service and piping hot pizza.']","['Fast delivery and great value deals.', 'Consistent taste, perfect for a quick family dinner.', 'Good budget option when you are starving.']","As an expert in answering questions about pizza restaurants, I can provide you with some insights based on the reviews provided.
+
+From the reviews, we can see that Sals, a pizza restaurant, consistently receives positive feedback for its quick service and piping hot pizzas. Reviews from East Auckland, Westcity, and North Shore all mention ""quick service"" and ""piping hot pizza,"" suggesting that Sals is a reliable choice for a quick family dinner.
+
+However, to provide a more informed comparison, I would need to know more about Dominoes. Unfortunately, the reviews provided do not mention Dominoes, so I cannot make a direct comparison.
+
+That being said, based on the reviews provided for Sals, it seems that Sals is a strong contender for a quick family dinner. The consistent positive feedback on service speed and value suggests that Sals is a reliable choice for families looking for a quick and delicious meal.
+
+If you're looking for a comparison with Dominoes, I would need more information about Dominoes' service speed and value, as well as more reviews.","Dominoes in South Auckland and North Shore is praised for fast delivery, great value deals, and consistent taste suitable for quick family dinners, making it a good budget option when hungry.",,0.6011761858175169,,,,0.763358753973866
+Are there any service delays reported at PizzaHut on Friday nights?,"['Service was a bit slow on a Friday night.', 'Service was a bit slow on a Friday night.', 'Service was a bit slow on a Friday night.']","['Service was a bit slow on a Friday night.', 'Stuffed crust is a game changer.', 'Nostalgic pan pizza, just like I remember.']","Based on the provided reviews, it appears that there have been reports of service delays at PizzaHut on Friday nights. All three reviews mention that the service was ""a bit slow"" on a Friday night, which suggests that this may be a recurring issue.
+
+However, it's worth noting that the ratings for these reviews are somewhat mixed. Two of the reviews (FB-003 and FB-024) have a rating of 4 and 3, respectively, which could suggest that the service delays are not a major issue, but rather an occasional occurrence. On the other hand, the third review (FB-028) has a rating of 5, which suggests that the reviewer had a particularly poor experience.
+
+Overall, while there are reports of service delays at PizzaHut on Friday nights, the severity and frequency of these delays may vary.","Yes, reviews for PizzaHut in South Auckland, East Auckland, and Downtown mention that service was a bit slow on Friday nights, although customers enjoy their stuffed crust and nostalgic pan pizza.",,,,,,0.8112544822459049
+"Between Georgies Pizza and Italianos, how do their artisan quality and staff atmospheres compare across East Auckland and Westcity?","['Atmosphere is lovely, pizza tastes like Naples.', 'Best local gourmet pizzas with fresh toppings!', 'Best local gourmet pizzas with fresh toppings!']","['Friendly staff and cozy neighborhood vibe.', 'Best local gourmet pizzas with fresh toppings!', 'True Italian artisan quality and rich sauce.', 'Slightly longer wait times, but high quality.']","To answer this question, I'll analyze the reviews provided to compare the artisan quality and staff atmospheres of Georgies Pizza and Italianos across East Auckland and Westcity.
+
+**Georgies Pizza**
+
+* East Auckland: Review 20 and Review 31 both mention that Georgies Pizza offers the ""best local gourmet pizzas with fresh toppings."" This suggests that their artisan quality is excellent in this location.
+* Westcity: Unfortunately, there are no reviews from Westcity in the provided dataset, so it's difficult to determine the quality of their artisan pizzas in this location.
+
+**Italianos**
+
+* East Auckland: There is no review from East Auckland in the provided dataset, so we can't determine the quality of their artisan pizzas in this location.
+
+**Staff Atmosphere**
+
+* Georgies Pizza:
+ + East Auckland: Review 20 and Review 31 both mention a lovely atmosphere, indicating that the staff atmosphere is excellent in this location.
+ + Westcity: Unfortunately, there are no reviews from Westcity in the provided dataset, so it's difficult to determine the quality of their staff atmosphere in this location.
+* Italianos:
+ + North Shore: Review 1 mentions a lovely atmosphere, indicating that the staff atmosphere is good in this location.
+
+**Comparison**
+
+Based on the reviews, it appears that Georgies Pizza has excellent artisan quality and a lovely staff atmosphere in East Auckland. Unfortunately, we don't have enough information to determine the quality of their artisan pizzas in Westcity or their staff atmosphere in North Shore (Italianos).
+
+However, it's worth noting that Italianos has a positive review from East Auckland, but it's not a direct comparison to Georgies Pizza. Review 1 from Italianos is more focused on the atmosphere, while Review 20 and Review 31 from Georgies Pizza are more focused on the quality of their pizzas.
+
+Overall, it seems that Georgies Pizza has a slight edge in terms of artisan quality and staff atmosphere, particularly in East Auckland.","Georgies Pizza in East Auckland is known for friendly staff and a cozy neighborhood vibe with fresh toppings, while Italianos in Westcity is highlighted for true Italian artisan quality, rich sauce, and high quality despite slightly longer wait times.",,0.0,,0.6,,0.8961554345453914

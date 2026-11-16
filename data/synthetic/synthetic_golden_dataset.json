@@ -1,0 +1,80 @@
+[
+  {
+    "user_input": "What is the truffle mushroom pizza like at Georgies Pizza in South Auckland?",
+    "reference": "The truffle mushroom pizza at Georgies Pizza in South Auckland is rated 4 to 5 stars and described as 'out of this world', though customers note it can be a bit pricey but worth every cent.",
+    "reference_contexts": [
+      "The truffle mushroom pizza is out of this world.",
+      "A bit pricey, but totally worth every cent."
+    ],
+    "synthesizer_type": "single_hop_specific",
+    "persona": "Gourmet Food Critic",
+    "franchise": "Georgies Pizza",
+    "location": "South Auckland"
+  },
+  {
+    "user_input": "Which restaurant in North Shore offers authentic Italian pizza with fresh basil and mozzarella?",
+    "reference": "Italianos on the North Shore offers pizza that 'tastes like Naples' with fresh basil and a perfect mozzarella balance, though it has slightly longer wait times.",
+    "reference_contexts": [
+      "Atmosphere is lovely, pizza tastes like Naples.",
+      "Fresh basil and perfect mozzarella balance.",
+      "Slightly longer wait times, but high quality."
+    ],
+    "synthesizer_type": "single_hop_specific",
+    "persona": "Gourmet Food Critic",
+    "franchise": "Italianos",
+    "location": "North Shore"
+  },
+  {
+    "user_input": "Where can I find large portion sizes and authentic New York style pepperoni slices?",
+    "reference": "Sal's in Westcity and Downtown is known for huge portions and the 'best pepperoni in town', featuring authentic New York style slices and piping hot quick service.",
+    "reference_contexts": [
+      "Huge portions, best pepperoni in town.",
+      "Amazing authentic New York style slices!",
+      "Quick service and piping hot pizza."
+    ],
+    "synthesizer_type": "single_hop_specific",
+    "persona": "Budget-Conscious Student",
+    "franchise": "Sals",
+    "location": "Downtown / Westcity"
+  },
+  {
+    "user_input": "How does Dominoes compare in service speed and value for a quick family dinner?",
+    "reference": "Dominoes in South Auckland and North Shore is praised for fast delivery, great value deals, and consistent taste suitable for quick family dinners, making it a good budget option when hungry.",
+    "reference_contexts": [
+      "Fast delivery and great value deals.",
+      "Consistent taste, perfect for a quick family dinner.",
+      "Good budget option when you are starving."
+    ],
+    "synthesizer_type": "single_hop_specific",
+    "persona": "Family Dinner Organizer",
+    "franchise": "Dominoes",
+    "location": "North Shore / South Auckland"
+  },
+  {
+    "user_input": "Are there any service delays reported at PizzaHut on Friday nights?",
+    "reference": "Yes, reviews for PizzaHut in South Auckland, East Auckland, and Downtown mention that service was a bit slow on Friday nights, although customers enjoy their stuffed crust and nostalgic pan pizza.",
+    "reference_contexts": [
+      "Service was a bit slow on a Friday night.",
+      "Stuffed crust is a game changer.",
+      "Nostalgic pan pizza, just like I remember."
+    ],
+    "synthesizer_type": "single_hop_specific",
+    "persona": "Neighborhood Regular",
+    "franchise": "PizzaHut",
+    "location": "Multiple Locations"
+  },
+  {
+    "user_input": "Between Georgies Pizza and Italianos, how do their artisan quality and staff atmospheres compare across East Auckland and Westcity?",
+    "reference": "Georgies Pizza in East Auckland is known for friendly staff and a cozy neighborhood vibe with fresh toppings, while Italianos in Westcity is highlighted for true Italian artisan quality, rich sauce, and high quality despite slightly longer wait times.",
+    "reference_contexts": [
+      "Friendly staff and cozy neighborhood vibe.",
+      "Best local gourmet pizzas with fresh toppings!",
+      "True Italian artisan quality and rich sauce.",
+      "Slightly longer wait times, but high quality."
+    ],
+    "synthesizer_type": "multi_hop_comparison",
+    "persona": "Gourmet Food Critic",
+    "franchise": "Georgies Pizza vs Italianos",
+    "location": "East Auckland / Westcity"
+  }
+]
