@@ -37,3 +37,12 @@ class RagasScores(BaseModel):
     answer_relevancy: float | None = None
     context_precision: float | None = None
     context_utilization: float | None = None
+
+
+class GoogleIngestRequest(BaseModel):
+    """A country and optional region search with a bounded API request cost."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    country_code: str = Field(pattern=r"^[A-Z]{2}$")
+    region: str = Field(default="", max_length=120)
+    max_places: int = Field(default=10, ge=1, le=20)

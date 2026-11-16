@@ -110,3 +110,33 @@ Tests inject an in-memory engine and exercise real FastAPI routes/lifespan,
 SSE ordering, filters, disabled evaluation, invalid input, CSV/JSON ingestion,
 duplicate handling, history saves, golden summaries, and legacy chain inputs.
 They do not require Ollama or modify the real review index.
+
+### Google pizza review ingestion
+
+Set `GOOGLE_PLACES_API_KEY` in the server environment and enable **Places API (New)**
+with billing in that Google Cloud project. Restart the server, open **Import Google
+reviews**, enter a two-letter country code (e.g. NZ, AU, US, GB), optionally enter a
+region/city, choose 5–20 places, and import. The key stays on the server.
+
+`POST /api/ingest/google` accepts
+`{"country_code":"NZ","region":"Auckland","max_places":10}`.
+It makes one paid Text Search request (including review fields); no pagination or
+country-wide completeness is promised. Country address components are checked;
+region text guides ranking and is not a strict geographic boundary. Google returns
+at most five relevance-ranked reviews per place. No-text and schema-invalid rows
+are skipped. Results report added reviews, duplicates, matched places, and skipped
+rows. Repeated imports skip stable review IDs; they do not update existing reviews.
+
+The existing five-column schema is preserved: `Feedback_ID` is a stable `FB-G-`
+hash of Google's review identity, `Franchise` is the business display name,
+`Location` is its formatted address, `Rating` is the individual review's stars,
+and `Comment` is its original text. Independent restaurants are supported.
+Business names/addresses beyond the existing 100-character limits are skipped.
+New reviews persist in Chroma and become available to the existing filters/chat.
+
+Google's standard Places terms restrict storing/indexing review content. Use
+persistent ingestion only where your Google agreement permits this use; an API
+key alone does not grant those rights. This importer does not retain author
+attribution and is not a Google review display widget. See
+[Places policies](https://developers.google.com/maps/documentation/places/web-service/policies)
+and [Text Search documentation](https://developers.google.com/maps/documentation/places/web-service/text-search).

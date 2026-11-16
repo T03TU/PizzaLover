@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 import config
-from api.schemas import ChatRequest, RagasScores, Review
+from api.schemas import ChatRequest, GoogleIngestRequest, RagasScores, Review
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = config.PROJECT_ROOT / "static"
@@ -210,6 +210,30 @@ async def ingest(request: Request):
             logger.exception("Review ingestion failed")
             raise HTTPException(503, "Embedding or storage failed; check Ollama and retry") from exc
     return {"added": len(reviews)}
+
+
+@app.post("/api/ingest/google")
+async def ingest_google(body: GoogleIngestRequest, request: Request):
+    """Import Google search results, skipping review IDs already indexed."""
+    from langchain_core.documents import Document
+    from src.google_reviews import GoogleReviewsError, fetch_google_reviews
+    try:
+        reviews, places, skipped = await fetch_google_reviews(body.country_code, body.region, body.max_places)
+    except GoogleReviewsError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    store = request.app.state.engine.store
+    async with request.app.state.model_lock:
+        existing = await asyncio.to_thread(store.get, include=["metadatas"])
+        known = {row.get("Feedback_ID") for row in existing["metadatas"] or []}
+        fresh = [r for r in reviews if r.Feedback_ID not in known]
+        if fresh:
+            docs = [Document(page_content=r.Comment, metadata=r.model_dump(exclude={"Comment"})) for r in fresh]
+            try:
+                await finish_thread(store.add_documents, docs, ids=[r.Feedback_ID for r in fresh])
+            except Exception as exc:
+                logger.exception("Google review ingestion failed")
+                raise HTTPException(503, "Embedding or storage failed; check Ollama and retry") from exc
+    return {"added": len(fresh), "duplicates": len(reviews) - len(fresh), "places": places, "skipped": skipped}
 
 
 def golden_summary():

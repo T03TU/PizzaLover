@@ -14,7 +14,7 @@
 <header class="topbar">
 <a class="brand" href="/" aria-label="PizzaLover home">
 <span class="brand-icon">◔</span> Pizza<span>Lover</span>
-<span class="edition">AUCKLAND EDITION</span>
+<span class="edition">PIZZA REVIEWS</span>
 </a>
 <div class="local">
 <i>
@@ -33,7 +33,7 @@
 </select>
 <label for="location">Location</label>
 <select id="location">
-<option value="">All Auckland locations</option>
+<option value="">All locations</option>
 </select>
 <label for="rating">Minimum rating</label>
 <select id="rating">
@@ -74,6 +74,20 @@
 <p id="upload-status" class="small" role="status">
 </p>
 </details>
+<details class="ingestion">
+<summary>Import Google reviews</summary>
+<form id="google-ingest-form">
+<label for="google-country">Country code</label>
+<input id="google-country" value="NZ" maxlength="2" pattern="[A-Za-z]{2}" required aria-describedby="google-help">
+<label for="google-region">Region or city (optional)</label>
+<input id="google-region" placeholder="e.g. Auckland" maxlength="120">
+<label for="google-limit">Maximum pizza places</label>
+<select id="google-limit"><option value="5">5</option><option value="10" selected>10</option><option value="20">20</option></select>
+<p id="google-help" class="small muted">Two-letter country code: NZ, AU, US, GB. Up to five reviews per place. Region text guides the search.</p>
+<button id="google-import" class="secondary" type="submit">Import Google reviews</button>
+<p id="google-status" class="small" role="status"></p>
+</form>
+</details>
 <div class="sidebar-bottom">
 <span class="status-dot">
 </span>
@@ -95,7 +109,7 @@
 <h1>Find your next<br>
 <em>favourite slice.</em>
 </h1>
-<p>Ask about Auckland's pizza spots. Get answers<br class="desktop"> grounded in real customer reviews.</p>
+<p>Ask about your indexed pizza spots. Get answers<br class="desktop"> grounded in real customer reviews.</p>
 <div class="chips">
 <button>Which pizza franchise has the best pepperoni?<span>↗</span>
 </button>

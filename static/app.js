@@ -217,3 +217,16 @@ Promise.all([loadMetadata(), refreshSummary()]).catch(() => {
   $('corpus-count').textContent = 'Review index unavailable';
   showError('Cannot connect to the local engine. Start FastAPI and check Ollama is running.');
 });
+
+$('google-ingest-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  $('google-import').disabled = true;
+  $('google-status').textContent = 'Fetching Google reviews and indexing locally…';
+  try {
+    const body = {country_code:$('google-country').value.trim().toUpperCase(), region:$('google-region').value.trim(), max_places:Number($('google-limit').value)};
+    const result = await (await api('/api/ingest/google', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)})).json();
+    $('google-status').textContent = `${result.added} reviews indexed from ${result.places} places; ${result.duplicates} already indexed, ${result.skipped} unavailable or invalid reviews skipped.`;
+    await loadMetadata();
+  } catch (error) { $('google-status').textContent = error.message; }
+  finally { $('google-import').disabled = false; }
+});
