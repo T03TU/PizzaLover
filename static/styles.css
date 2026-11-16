@@ -901,3 +901,10 @@ h1 em {
 #save-status, #upload-status {
   overflow-wrap: anywhere;
 }
+
+#column-dialog { width: min(560px, 90vw); max-height: 90vh; overflow: auto; border: 1px solid #ddd; border-radius: 16px; padding: 24px; }
+#column-dialog::backdrop { background: rgb(0 0 0 / 45%); }
+#column-fields label { display: block; margin-top: 12px; }
+#column-fields select { display: block; width: 100%; margin-top: 4px; }
+#column-error { color: #a32626; }
+.mapping-actions { display: flex; gap: 12px; justify-content: flex-end; }

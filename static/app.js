@@ -202,6 +202,51 @@ $('save-history').addEventListener('click', async () => {
   catch (error) { $('save-status').textContent = error.message; }
   finally { $('save-history').disabled = false; }
 });
+const reviewFields = ['Feedback_ID', 'Franchise', 'Location', 'Rating', 'Comment'];
+function chooseColumnMapping(preview) {
+  const dialog = $('column-dialog');
+  $('column-fields').replaceChildren();
+  $('column-error').textContent = '';
+  const selects = new Map();
+  for (const field of reviewFields) {
+    const label = node('label', field);
+    const select = node('select');
+    select.required = true;
+    select.add(new Option('Choose a source column…', ''));
+    preview.columns.forEach((column, index) => select.add(new Option(column, String(index))));
+    const match = preview.columns.findIndex(column => column.toLowerCase() === field.toLowerCase());
+    select.value = match < 0 ? '' : String(match);
+    const sample = node('p', '', 'small muted');
+    const update = () => {
+      const column = preview.columns[Number(select.value)];
+      sample.textContent = select.value === '' ? '' : `Example: ${String(preview.sample[0]?.[column] ?? '(empty)').slice(0, 160)}`;
+    };
+    select.addEventListener('change', update); update();
+    label.append(select, sample); $('column-fields').append(label); selects.set(field, select);
+  }
+  return new Promise(resolve => {
+    let mapping = null;
+    const submit = event => {
+      event.preventDefault();
+      const indices = [...selects.values()].map(select => select.value);
+      if (indices.includes('') || new Set(indices).size !== reviewFields.length) {
+        $('column-error').textContent = 'Choose a different source column for each field.'; return;
+      }
+      mapping = Object.fromEntries([...selects].map(([field, select]) => [field, preview.columns[Number(select.value)]]));
+      dialog.close();
+    };
+    const cancel = () => dialog.close();
+    const close = () => {
+      $('column-form').removeEventListener('submit', submit);
+      $('column-cancel').removeEventListener('click', cancel);
+      resolve(mapping);
+    };
+    $('column-form').addEventListener('submit', submit);
+    $('column-cancel').addEventListener('click', cancel);
+    dialog.addEventListener('close', close, {once:true});
+    dialog.showModal();
+  });
+}
 $('upload').addEventListener('click', async () => {
   const file = $('csv-file').files[0];
   if (!file) { $('upload-status').textContent = 'Choose a CSV or Excel (.xlsx) file first.'; return; }
@@ -209,7 +254,20 @@ $('upload').addEventListener('click', async () => {
   if (file.size > 2 * 1024 * 1024 - 1024) { $('upload-status').textContent = 'Please choose a file smaller than 2 MiB.'; return; }
   const form = new FormData(); form.append('file',file);
   $('upload').disabled = true; $('upload-status').textContent = 'Embedding and indexing locally…';
-  try { const result = await (await api('/api/ingest',{method:'POST',body:form})).json(); $('upload-status').textContent = `${result.added} reviews indexed.`; await loadMetadata(); }
+  try {
+    $('upload-status').textContent = 'Checking file columns…';
+    const preview = await (await api('/api/ingest/preview', {method:'POST', body:form})).json();
+    if (preview.requires_mapping) {
+      $('upload-status').textContent = 'Map the file columns to continue.';
+      const mapping = await chooseColumnMapping(preview);
+      if (!mapping) { $('upload-status').textContent = 'Upload cancelled. No reviews were indexed.'; return; }
+      form.append('mapping', JSON.stringify(mapping));
+    }
+    $('upload-status').textContent = 'Embedding and indexing locally…';
+    const result = await (await api('/api/ingest', {method:'POST', body:form})).json();
+    $('upload-status').textContent = `${result.added} reviews indexed.`;
+    await loadMetadata();
+  }
   catch (error) { $('upload-status').textContent = error.message; }
   finally { $('upload').disabled = false; }
 });

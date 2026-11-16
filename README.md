@@ -147,3 +147,14 @@ embedding; duplicate IDs or invalid rows reject the upload. Successful uploads
 are embedded with the configured Ollama embedding model and persisted in Chroma;
 franchise/location filters refresh automatically. Install updated dependencies
 with `pip install -r requirements.txt` to enable Excel support.
+
+If an uploaded CSV or XLSX has different column names (or extra columns), a
+**Map review columns** dialog asks which source column supplies each of the five
+schema fields. Sample values help identify the right columns. All fields must
+map to distinct source columns; extra columns are ignored. Canceling stores
+nothing. Mapping renames fields only: IDs must still start with `FB-`, ratings
+must be 1–5, and all existing validation/duplicate checks still apply.
+`POST /api/ingest/preview` accepts a multipart `file` and returns columns, up to
+three sample rows, row count, and `requires_mapping`, without embedding. To import
+custom columns, send the original file to `/api/ingest` with a multipart `mapping`
+field containing a JSON object of schema-field names to source-column names.

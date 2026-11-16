@@ -160,7 +160,7 @@ async def metadata(request: Request):
             "total_documents": len(records["ids"])}
 
 
-async def read_reviews(request):
+async def read_reviews(request, inspect=False):
     """Parse bounded JSON or multipart CSV/XLSX, validating the entire batch first."""
     raw = bytearray()
     async for chunk in request.stream():
@@ -176,8 +176,14 @@ async def read_reviews(request):
                 if upload is None or not hasattr(upload, "read"):
                     raise HTTPException(422, "Provide a CSV or XLSX upload in the 'file' field")
                 from src.review_files import parse_review_file
-                rows = await asyncio.to_thread(parse_review_file, upload.filename, await upload.read())
+                mapping_text = form.get("mapping")
+                mapping = json.loads(mapping_text) if mapping_text is not None else None
+                rows = await asyncio.to_thread(parse_review_file, upload.filename, await upload.read(), mapping, inspect)
+                if inspect:
+                    return rows
         else:
+            if inspect:
+                raise HTTPException(422, "Provide a CSV or XLSX file")
             payload = await request.json()
             rows = payload if isinstance(payload, list) else [payload]
         if not rows or len(rows) > 500:
@@ -189,6 +195,12 @@ async def read_reviews(request):
         return reviews
     except (ValidationError, ValueError, UnicodeError, csv.Error) as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+@app.post("/api/ingest/preview")
+async def preview_ingestion(request: Request):
+    """Inspect bounded file columns and samples without embedding or storing data."""
+    return await read_reviews(request, inspect=True)
 
 
 @app.post("/api/ingest")

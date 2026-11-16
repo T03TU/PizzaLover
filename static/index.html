@@ -166,5 +166,16 @@
 </main>
 <div id="connection-error" class="connection-error" role="alert" hidden>
 </div>
+<dialog id="column-dialog" aria-labelledby="column-title">
+<form id="column-form">
+<h2 id="column-title">Map review columns</h2>
+<p>Choose which file column supplies each review field. Other columns are ignored.</p>
+<p class="small muted">IDs must start with FB-; ratings must be 1–5. All five fields are required.</p>
+<div id="column-fields"></div>
+<p id="column-error" role="alert"></p>
+<div class="mapping-actions"><button type="button" id="column-cancel" class="secondary">Cancel</button>
+<button type="submit" class="secondary">Apply mapping and embed</button></div>
+</form>
+</dialog>
 </body>
 </html>
