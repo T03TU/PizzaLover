@@ -19,10 +19,28 @@
 <div class="local">
 <i>
 </i> Local models. Local knowledge.</div>
+<div class="profile-control">
+<label for="profile">Local profile</label>
+<select id="profile" aria-describedby="profile-help" disabled><option>Loading…</option></select>
+<button id="add-profile" class="subtle" disabled>＋ Profile</button>
+</div>
 <button id="new-chat" class="subtle">＋ New chat</button>
 </header>
-<main class="workspace">
-<aside class="sidebar">
+<nav class="pane-controls" aria-label="Show or hide workspace panes">
+<span class="section-label">PANES</span>
+<button type="button" data-pane="sidebar" aria-controls="sidebar" aria-expanded="true">Hide controls & history</button>
+<button type="button" data-pane="chat-pane" aria-controls="chat-pane" aria-expanded="true">Hide chat</button>
+<button type="button" data-pane="evidence-pane" aria-controls="evidence-pane" aria-expanded="true">Hide evidence & tests</button>
+</nav>
+<main class="workspace" id="workspace">
+<aside class="sidebar" id="sidebar" aria-label="Controls and chat history">
+<details class="chat-history" open>
+<summary>Chat history</summary>
+<p id="profile-help" class="small muted">Named profiles in this app. Anyone using this app can switch profiles; these are not private accounts.</p>
+<div id="chat-list" aria-label="Saved conversations"></div>
+<p id="history-status" class="small muted" role="status">Loading saved chats…</p>
+</details>
+<div class="divider"></div>
 <div class="section-label">MAKE IT YOUR SLICE</div>
 <h2>Explore the reviews</h2>
 <p class="muted">Narrow the evidence behind your next answer.</p>
@@ -95,7 +113,7 @@
 <p>Ollama · Chroma · Ragas</p>
 </div>
 </aside>
-<section class="chat-pane" aria-label="Pizza review chat">
+<section class="chat-pane" id="chat-pane" aria-label="Pizza review chat">
 <div class="chat-heading">
 <span>THE REVIEW TABLE</span>
 <span class="small muted">Answers with receipts</span>
@@ -134,7 +152,7 @@
 <div class="composer-note">Evidence from the top 3 matching reviews · Each question is independent</div>
 </div>
 </section>
-<aside class="evidence-pane" aria-label="Evidence and evaluation">
+<aside class="evidence-pane" id="evidence-pane" aria-label="Evidence and evaluation">
 <div class="evidence-heading">
 <div>
 <div class="section-label">BEHIND THE ANSWER</div>
@@ -163,9 +181,21 @@
 <div id="golden-summary" class="small muted">No saved benchmark available.</div>
 </details>
 </aside>
+<p id="panes-empty" class="muted" hidden>All panes are hidden. Use the controls above to show a pane.</p>
 </main>
 <div id="connection-error" class="connection-error" role="alert" hidden>
 </div>
+<dialog id="profile-dialog" aria-labelledby="profile-title">
+<form id="profile-form">
+<h2 id="profile-title">Create a local profile</h2>
+<p class="small muted">Chat history is saved separately for each profile on this server. Profiles are not password-protected.</p>
+<label for="profile-name">Profile name</label>
+<input id="profile-name" required maxlength="80" autocomplete="nickname">
+<p id="profile-error" role="alert"></p>
+<div class="mapping-actions"><button type="button" id="profile-cancel" class="secondary">Cancel</button>
+<button type="submit" id="profile-create" class="secondary">Create profile</button></div>
+</form>
+</dialog>
 <dialog id="column-dialog" aria-labelledby="column-title">
 <form id="column-form">
 <h2 id="column-title">Map review columns</h2>

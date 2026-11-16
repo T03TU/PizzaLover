@@ -101,6 +101,9 @@ class WebTests(unittest.TestCase):
         self.engine = SimpleNamespace(store=self.store,chain=self.chain,evaluator=self.evaluator)
         self.patch = patch('api.server.create_engine', return_value=self.engine)
         self.patch.start()
+        self.history_dir = tempfile.TemporaryDirectory()
+        self.history_patch = patch('config.CHAT_HISTORY_PATH', Path(self.history_dir.name) / 'chats.sqlite3')
+        self.history_patch.start()
         self.client = TestClient(app)
         self.client.__enter__()
 
@@ -108,6 +111,8 @@ class WebTests(unittest.TestCase):
         """Close resources and restore production construction."""
         self.client.__exit__(None,None,None)
         self.patch.stop()
+        self.history_patch.stop()
+        self.history_dir.cleanup()
 
     def stream(self, **kwargs):
         """Decode the JSON SSE frames from a complete response."""
@@ -189,6 +194,92 @@ class WebTests(unittest.TestCase):
         self.chain.astream = broken
         frames = self.stream()
         self.assertEqual([name for name,_ in frames],['citations','error','done'])
+
+    def test_persistent_chat_and_sources(self):
+        """Save queries, answers, evidence and metrics, then continue the same chat."""
+        self.client.get('/api/profiles')
+        response = self.client.post('/api/chat/stream', json={"question": "Best pepperoni?", "eval_enabled": False})
+        chat_id = response.headers['X-Chat-ID']
+        first = self.client.get(f'/api/chats/{chat_id}').json()['turns'][0]
+        self.assertEqual(first['question'], 'Best pepperoni?')
+        self.assertEqual(first['text'], 'Excellent pepperoni [FB-014].')
+        self.assertEqual(first['citations'], [REVIEW])
+        self.assertEqual(first['status'], 'complete')
+        self.assertEqual(first['metrics']['evaluation_status'], 'disabled')
+        self.assertEqual(first['filters']['franchise'], None)
+        self.assertIsNone(first['error'])
+        self.stream(question='And the service?', chat_id=chat_id)
+        turns = self.client.get(f'/api/chats/{chat_id}').json()['turns']
+        self.assertEqual(len(turns), 2)
+        self.assertEqual(turns[1]['metrics']['scores']['faithfulness'], 1.)
+        from src.chat_history import ChatHistory
+        reopened = ChatHistory(Path(self.history_dir.name) / 'chats.sqlite3')
+        profile = self.client.get('/api/profiles').json()['current']
+        self.assertEqual(len(reopened.chat(profile['id'], chat_id)['turns']), 2)
+        self.assertEqual(self.client.get('/api/chats').json()['chats'][0]['turn_count'], 2)
+
+    def test_profile_scoping_and_switching(self):
+        """Another profile cannot list, fetch, append to, or delete the owner's chats."""
+        alice = self.client.post('/api/profiles', json={"name": "Alice"}).json()
+        response = self.client.post('/api/chat/stream', json={"question": "Alice's question", "eval_enabled": False})
+        chat_id = response.headers['X-Chat-ID']
+        self.assertEqual(self.client.post('/api/profiles', json={"name": "Bob"}).status_code, 201)
+        self.assertEqual(self.client.get('/api/chats').json()['chats'], [])
+        self.assertEqual(self.client.get(f'/api/chats/{chat_id}').status_code, 404)
+        self.assertEqual(self.client.delete(f'/api/chats/{chat_id}').status_code, 404)
+        self.assertEqual(self.client.post('/api/chat/stream', json={"question": "Wrong profile", "chat_id": chat_id}).status_code, 404)
+        self.assertEqual(self.client.get('/api/chats', headers={'X-Profile-ID': alice['id']}).status_code, 409)
+        self.assertEqual(self.client.post(f"/api/profiles/{alice['id']}/select").status_code, 200)
+        self.assertEqual(len(self.client.get('/api/chats').json()['chats']), 1)
+        self.assertEqual(self.client.delete(f'/api/chats/{chat_id}').status_code, 204)
+        self.assertEqual(self.client.get(f'/api/chats/{chat_id}').status_code, 404)
+        with app.state.chat_history.connect() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM turns').fetchone()[0], 0)
+
+    def test_profile_validation_and_cookie(self):
+        """Profiles have bounded unique names and the browser remembers its selection."""
+        self.assertEqual(self.client.get('/api/chats').status_code, 401)
+        response = self.client.get('/api/profiles')
+        guest = response.json()['current']
+        self.assertIn('HttpOnly', response.headers['set-cookie'])
+        self.assertEqual(self.client.get('/api/profiles').json()['current'], guest)
+        self.assertEqual(self.client.post('/api/profiles', json={'name': ' Alice '}).json()['name'], 'Alice')
+        self.assertEqual(self.client.post('/api/profiles', json={'name': 'alice'}).status_code, 409)
+        for name in ('', '   ', 'a' * 81):
+            self.assertEqual(self.client.post('/api/profiles', json={'name': name}).status_code, 422)
+        self.assertEqual(self.client.get('/api/chats/not-a-uuid').status_code, 422)
+
+    def test_failed_and_interrupted_queries_remain_in_history(self):
+        """Partial output and query filters survive errors and generator cancellation."""
+        async def broken(values):
+            yield 'Partial answer'
+            raise ConnectionError('offline')
+        self.chain.astream = broken
+        self.stream(filters={'min_rating': 4})
+        chat_id = self.client.get('/api/chats').json()['chats'][0]['id']
+        saved = self.client.get(f'/api/chats/{chat_id}').json()['turns'][0]
+        self.assertEqual(saved['status'], 'failed')
+        self.assertEqual(saved['text'], 'Partial answer')
+        self.assertEqual(saved['filters']['min_rating'], 4)
+        self.assertTrue(saved['error'])
+
+        async def cancelled(values):
+            yield 'Interrupted answer'
+            raise asyncio.CancelledError()
+        self.chain.astream = cancelled
+        self.client.post('/api/chat/stream', json={'question': 'Stopped question'})
+        chats = self.client.get('/api/chats').json()['chats']
+        saved = self.client.get(f"/api/chats/{chats[0]['id']}").json()['turns'][0]
+        self.assertEqual(saved['status'], 'interrupted')
+        self.assertEqual(saved['text'], 'Interrupted answer')
+
+    def test_empty_context_turn_is_saved(self):
+        self.stream(filters={'franchise': 'Missing'})
+        chat_id = self.client.get('/api/chats').json()['chats'][0]['id']
+        turn = self.client.get(f'/api/chats/{chat_id}').json()['turns'][0]
+        self.assertEqual(turn['status'], 'complete')
+        self.assertEqual(turn['citations'], [])
+        self.assertEqual(turn['metrics']['evaluation_status'], 'no_context')
 
     def test_chain_input_compatibility(self):
         """Existing CLI Document inputs retain citation metadata and model config."""

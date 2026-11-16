@@ -1,11 +1,11 @@
 [
   {
-    "timestamp": "2026-11-16T18:12:56.995469",
-    "question": "Which pizza franchise has the best pepperoni?",
-    "answer": "Based on the review evidence, it appears that Sals has the best pepperoni, as all three reviews mention it as the \"best pepperoni in town\". The location of these reviews is not directly related to the",
+    "timestamp": "2026-11-16T19:09:22.163383",
+    "question": "what is the best pizza place in auckland?",
+    "answer": "I'd be happy to help you with your question about the best pizza place in Auckland! Based on the review evidence provided, it seems that The Master & Margherita is a top contender. Both reviews [FB-EX",
     "scores": {
-      "faithfulness": 0.75,
-      "answer_relevancy": 0.8249,
+      "faithfulness": null,
+      "answer_relevancy": 1.0,
       "llm_context_precision_without_reference": 0.0,
       "context_utilization": 0.0
     }

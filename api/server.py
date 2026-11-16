@@ -9,20 +9,24 @@ import csv
 import json
 import logging
 import math
+import sqlite3
 from contextlib import asynccontextmanager
 from time import perf_counter
+from uuid import UUID, uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 
 import config
-from api.schemas import ChatRequest, GoogleIngestRequest, RagasScores, Review
+from api.schemas import ChatRequest, GoogleIngestRequest, ProfileRequest, RagasScores, Review
+from src.chat_history import ChatHistory
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = config.PROJECT_ROOT / "static"
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+PROFILE_COOKIE = "pizzalover_profile"
 
 
 def create_engine():
@@ -44,6 +48,7 @@ async def lifespan(app):
     app.state.engine = await asyncio.to_thread(create_engine)
     # One lock serializes generation, ingestion embeddings, and judge work on Ollama.
     app.state.model_lock = asyncio.Lock()
+    app.state.chat_history = await asyncio.to_thread(ChatHistory, config.CHAT_HISTORY_PATH)
     try:
         yield
     finally:
@@ -85,6 +90,79 @@ async def finish_thread(function, *args, **kwargs):
         raise
 
 
+def set_profile_cookie(response, profile):
+    """Remember a local profile without exposing the selector cookie to scripts."""
+    response.set_cookie(PROFILE_COOKIE, profile["id"], httponly=True, samesite="strict", max_age=365 * 86400)
+
+
+async def current_profile(request, create=False):
+    history = request.app.state.chat_history
+    profile = await asyncio.to_thread(history.profile, request.cookies.get(PROFILE_COOKIE, ""))
+    if profile:
+        expected = request.headers.get("X-Profile-ID")
+        if expected and expected != profile["id"]:
+            raise HTTPException(409, "The local profile changed in another tab. Reload before continuing.")
+        return profile
+    if request.headers.get("X-Profile-ID"):
+        raise HTTPException(401, "The local profile is no longer selected. Reload before continuing.")
+    if create:
+        return await asyncio.to_thread(history.create_profile, f"Guest {uuid4().hex[:12]}")
+    raise HTTPException(401, "Select a local profile first")
+
+
+@app.get("/api/profiles")
+async def profiles(request: Request, response: Response):
+    """List profiles for this trusted local installation and select a browser default."""
+    profile = await current_profile(request, create=True)
+    set_profile_cookie(response, profile)
+    response.headers["Cache-Control"] = "no-store"
+    return {"current": profile, "profiles": await asyncio.to_thread(request.app.state.chat_history.profiles)}
+
+
+@app.post("/api/profiles", status_code=201)
+async def create_profile(body: ProfileRequest, request: Request, response: Response):
+    try:
+        profile = await asyncio.to_thread(request.app.state.chat_history.create_profile, body.name)
+    except sqlite3.IntegrityError as exc:
+        raise HTTPException(409, "A profile with that name already exists. Select it from the profile menu.") from exc
+    set_profile_cookie(response, profile)
+    return profile
+
+
+@app.post("/api/profiles/{profile_id}/select")
+async def select_profile(profile_id: UUID, request: Request, response: Response):
+    profile = await asyncio.to_thread(request.app.state.chat_history.profile, str(profile_id))
+    if not profile:
+        raise HTTPException(404, "Profile not found")
+    set_profile_cookie(response, profile)
+    return profile
+
+
+@app.get("/api/chats")
+async def list_chats(request: Request, response: Response):
+    profile = await current_profile(request)
+    response.headers["Cache-Control"] = "no-store"
+    return {"chats": await asyncio.to_thread(request.app.state.chat_history.chats, profile["id"])}
+
+
+@app.get("/api/chats/{chat_id}")
+async def get_chat(chat_id: UUID, request: Request, response: Response):
+    profile = await current_profile(request)
+    result = await asyncio.to_thread(request.app.state.chat_history.chat, profile["id"], str(chat_id))
+    if not result:
+        raise HTTPException(404, "Chat not found for this profile")
+    response.headers["Cache-Control"] = "no-store"
+    return result
+
+
+@app.delete("/api/chats/{chat_id}", status_code=204)
+async def delete_chat(chat_id: UUID, request: Request):
+    profile = await current_profile(request)
+    deleted = await asyncio.to_thread(request.app.state.chat_history.delete_chat, profile["id"], str(chat_id))
+    if not deleted:
+        raise HTTPException(404, "Chat not found for this profile")
+
+
 @app.post("/api/chat/stream")
 async def chat(body: ChatRequest, request: Request):
     """Stream citations, answer chunks, timings/scores, and an explicit done event.
@@ -95,6 +173,18 @@ async def chat(body: ChatRequest, request: Request):
     """
     from src.vector_store import get_retriever
     engine = request.app.state.engine
+    history = request.app.state.chat_history
+    profile = await current_profile(request, create=True)
+    if body.chat_id:
+        chat_id = str(body.chat_id)
+    else:
+        saved_chat = await asyncio.to_thread(history.create_chat, profile["id"], body.question.strip()[:100])
+        chat_id = saved_chat["id"]
+    try:
+        turn = await asyncio.to_thread(history.start_turn, profile["id"], chat_id, body.question,
+                                      body.filters.model_dump(), body.eval_enabled)
+    except KeyError as exc:
+        raise HTTPException(404, "Chat not found for this profile") from exc
 
     async def frames():
         """Produce a single turn, with SSE heartbeats during lengthy judge work."""
@@ -103,17 +193,20 @@ async def chat(body: ChatRequest, request: Request):
                 retriever = get_retriever(vector_store=engine.store, **body.filters.model_dump())
                 docs = await finish_thread(retriever.invoke, body.question)
                 citations = [dict(doc.metadata, Comment=doc.page_content) for doc in docs]
+                turn["citations"] = citations
                 yield event("citations", citations)
                 start = perf_counter()
                 answer = ""
                 if not docs:
                     answer = "No reviews match these filters. Try broadening your search."
+                    turn["text"] = answer
                     yield event("token", answer)
                 else:
                     async for token in engine.chain.astream({"question": body.question, "reviews": docs}):
                         if await request.is_disconnected():
                             return
                         answer += token
+                        turn["text"] = answer
                         yield event("token", token)
                 generation_time = perf_counter() - start
                 metrics = {"generation_time": generation_time, "evaluation_time": 0,
@@ -140,14 +233,23 @@ async def chat(body: ChatRequest, request: Request):
                     metrics["evaluation_time"] = perf_counter() - eval_start
                 elif not docs:
                     metrics["evaluation_status"] = "no_context"
+                turn.update(metrics=metrics, status="complete", error=None)
+                await finish_thread(history.save_turn, profile["id"], chat_id, turn)
                 yield event("metrics", metrics)
         except Exception:
             logger.exception("Chat stream failed")
-            yield event("error", {"message": "Could not complete this turn. Check the local Ollama server and required models."})
+            turn.update(status="failed", error="Could not complete this turn. Check the local Ollama server and required models.")
+            yield event("error", {"message": turn["error"]})
+        finally:
+            # Starlette cancels the generator on disconnect; shield the final DB write.
+            await finish_thread(history.save_turn, profile["id"], chat_id, turn)
         yield event("done", {})
 
-    return StreamingResponse(frames(), media_type="text/event-stream", headers={
-        "Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    response = StreamingResponse(frames(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-store", "X-Accel-Buffering": "no",
+        "X-Chat-ID": chat_id, "X-Turn-ID": turn["id"]})
+    set_profile_cookie(response, profile)
+    return response
 
 
 @app.get("/api/metadata/options")

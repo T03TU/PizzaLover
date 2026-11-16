@@ -52,8 +52,25 @@ Each question retrieves up to three matching reviews. Answers stream first;
 optional Ragas scoring follows. Click an inline feedback ID to highlight its
 source, or click an earlier answer to restore that turn's evidence and scores.
 Each question is independent; prior chat messages are not sent as model context.
-New chat clears the displayed conversation, while server evaluation history
-remains until the server restarts. Chat messages are not stored in browser storage.
+Use the **Panes** buttons to collapse or reopen controls/history, chat, or
+evidence/tests independently. These buttons remain available when every pane is
+hidden. The browser remembers pane visibility across reloads. Selecting an inline
+citation reopens the evidence pane automatically.
+
+Choose a **Local profile**, or click **＋ Profile** to create a named identity.
+Each profile has its own persistent chat list. Questions, answers, retrieved
+sources, filters, timings, scores, and failed/interrupted turns are stored in
+`data/chat_history.sqlite3`, which is excluded from Git. Chats survive browser
+refreshes and server restarts. The browser remembers the selected profile with an
+HttpOnly cookie and the last open chat ID in local storage; message content is
+stored on the server. **New chat** starts a separate conversation and retains
+previous chats. Open a saved chat to view or continue it; use its × button to
+delete it. Profiles are local selectors, not authenticated accounts: anyone using
+this trusted local app can switch profiles. If a different tab changes the profile,
+reload before sending more questions.
+
+The session quality summary and evaluation export still cover the shared server
+session; the saved chat list, individual turns, and their scores belong to profiles.
 
 Use **Add customer reviews** to upload UTF-8 CSV or Excel `.xlsx` files (up to 500 rows, under
 2 MiB including multipart overhead). The required columns are `Feedback_ID`,
@@ -72,7 +89,13 @@ The API exposes:
 
 | Endpoint | Behavior |
 | --- | --- |
-| `POST /api/chat/stream` | JSON question, filters, eval_enabled; SSE citations → token chunks → metrics → done. Errors emit error → done. |
+| `POST /api/chat/stream` | JSON question, filters, eval_enabled, optional chat_id; saves the turn to the selected profile. SSE citations → token chunks → metrics → done. Errors emit error → done. X-Chat-ID and X-Turn-ID response headers identify saved records. |
+| `GET /api/profiles` | List local profiles and select a new guest profile when this browser has no selection. |
+| `POST /api/profiles` | Create and select a profile using JSON `{"name":"Alice"}`. Names are unique ignoring case. |
+| `POST /api/profiles/{id}/select` | Switch the profile cookie. Local profiles do not require passwords. |
+| `GET /api/chats` | List only the selected profile's conversations, newest first. |
+| `GET /api/chats/{id}` | Restore a selected-profile chat with ordered turns, evidence, and scores. |
+| `DELETE /api/chats/{id}` | Delete a selected-profile chat and its turns. |
 | `GET /api/metadata/options` | Distinct indexed franchises/locations and document count. |
 | `POST /api/ingest` | Single review JSON, JSON array, or multipart CSV/XLSX in the `file` field. |
 | `GET /api/evaluation/summary` | Session mean/min/max/count plus the latest golden report aggregates. |
@@ -110,6 +133,23 @@ Tests inject an in-memory engine and exercise real FastAPI routes/lifespan,
 SSE ordering, filters, disabled evaluation, invalid input, CSV/JSON ingestion,
 duplicate handling, history saves, golden summaries, and legacy chain inputs.
 They do not require Ollama or modify the real review index.
+Chat tests use a temporary SQLite database and cover persistence, profile isolation,
+continuation, deletion, validation, and failed/interrupted turns.
+
+Optional browser regression (requires Playwright and Chrome):
+
+```bash
+# In one terminal; fake inference and temporary history, no production writes:
+venv/bin/python tests/ui_server.py
+# In another terminal:
+node tests/test_chat_ui.cjs
+# PLAYWRIGHT_PATH may point to an existing Playwright package directory;
+# CHROME_PATH may override /usr/bin/google-chrome.
+```
+
+The browser check exercises all pane combinations at desktop, tablet, and phone
+widths, reload persistence, profile switching, chat restoration/continuation/deletion,
+and citation reopening. Screenshots are written under `/tmp/pizzalover-history-*.png`.
 
 ### Google pizza review ingestion
 

@@ -5,7 +5,7 @@ No review ingestion tests write to the production index.
 
 ## Automated checks
 
-- `venv/bin/python -m unittest discover -s tests -v`: 10 passing tests.
+- `venv/bin/python -m unittest discover -s tests -v`: 26 passing tests.
 - `node tests/test_sse_parser.cjs`: passes byte-by-byte UTF-8 chunks, split SSE
   frames, CRLF separators, evaluation heartbeat status, and termination events.
 - `node --check static/app.js`: passes.
@@ -16,6 +16,9 @@ lifespan. They cover source-before-token-before-metrics ordering, metadata
 filters, empty results, disabled evaluation, invalid requests, static assets,
 CSV/JSON ingestion, duplicate IDs, history saving, golden CSV summaries, explicit
 stream errors, and compatibility with Document inputs to the shared chain.
+Temporary SQLite databases verify saved queries, answers, sources, metrics,
+filters, restart persistence, profile selection/isolation, chat continuation and
+deletion, failed/interrupted turns, and stale profile requests from other tabs.
 
 ## Local integration checks
 
@@ -42,8 +45,14 @@ quality guarantee; local model quality varies by question. Missing metric
 values are displayed explicitly rather than replaced with invented scores.
 `pip check` reports no broken requirements.
 
-No browser automation/preview capability was available; visual layout and
-interactive citation scrolling have not been verified in an actual browser.
+The optional `tests/test_chat_ui.cjs` browser regression runs in headless Chrome
+against `tests/ui_server.py`, which uses fake inference and temporary storage.
+It verifies profile creation/switching, saved chat restoration/continuation/deletion,
+citation reopening, interrupted query persistence, and all eight pane visibility
+combinations at 1440, 1000, 850, and 390 pixels without horizontal overflow.
+Pane visibility and the active conversation survive reloads. Desktop and phone
+screenshots were also inspected. These checks exercise the actual UI and API;
+they do not invoke or change the production review index or model.
 
 The final two-case golden benchmark was rerun with the updated dependencies:
 all 12 scoring jobs completed, all six metrics returned numeric values for

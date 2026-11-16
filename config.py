@@ -11,6 +11,7 @@ Attributes:
         SYNTHETIC_GOLDEN_CSV are its structured and tabular output files.
     CHROMA_DB_DIR: Persistent review index directory. LEGACY_CHROMA_DB_DIR
         records the original index location for compatibility.
+    CHAT_HISTORY_PATH: SQLite storage for local profiles and saved conversations.
     EVALUATION_HISTORY_PATH: JSON output for interactive evaluation history.
     EVALUATION_RESULTS_CSV: Batch evaluation report destination.
     GOLDEN_RESULTS_CSV: Reference-based evaluation report destination.
@@ -67,6 +68,7 @@ SYNTHETIC_DATA_DIR = DATA_DIR / "synthetic"
 SYNTHETIC_GOLDEN_JSON = SYNTHETIC_DATA_DIR / "synthetic_golden_dataset.json"
 SYNTHETIC_GOLDEN_CSV = SYNTHETIC_DATA_DIR / "synthetic_golden_dataset.csv"
 CHROMA_DB_DIR = DATA_DIR / "chroma_db"
+CHAT_HISTORY_PATH = DATA_DIR / "chat_history.sqlite3"
 
 # Standardized test fixtures and legacy compatibility paths
 TEST_DATASET_PATH = FIXTURES_DIR / "pizza_feedback_50_entries.csv"

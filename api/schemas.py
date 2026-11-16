@@ -1,5 +1,7 @@
 """Validated chat, metadata, ingestion, and evaluation wire formats."""
 
+from uuid import UUID
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -17,6 +19,14 @@ class ChatRequest(BaseModel):
     question: str = Field(min_length=1, max_length=4000, pattern=r"\S")
     filters: Filters = Field(default_factory=Filters)
     eval_enabled: bool = True
+    chat_id: UUID | None = None
+
+
+class ProfileRequest(BaseModel):
+    """A named profile on this trusted local app; this is not a login account."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+    name: str = Field(min_length=1, max_length=80, pattern=r"\S")
 
 
 class Review(BaseModel):
