@@ -204,7 +204,8 @@ $('save-history').addEventListener('click', async () => {
 });
 $('upload').addEventListener('click', async () => {
   const file = $('csv-file').files[0];
-  if (!file) { $('upload-status').textContent = 'Choose a CSV file first.'; return; }
+  if (!file) { $('upload-status').textContent = 'Choose a CSV or Excel (.xlsx) file first.'; return; }
+  if (!/\.(csv|xlsx)$/i.test(file.name)) { $('upload-status').textContent = 'Choose a .csv or .xlsx file.'; return; }
   if (file.size > 2 * 1024 * 1024 - 1024) { $('upload-status').textContent = 'Please choose a file smaller than 2 MiB.'; return; }
   const form = new FormData(); form.append('file',file);
   $('upload').disabled = true; $('upload-status').textContent = 'Embedding and indexing locally…';

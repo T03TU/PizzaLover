@@ -68,9 +68,9 @@
 </section>
 <details class="ingestion">
 <summary>Add customer reviews</summary>
-<p class="small muted">Upload a CSV with Feedback_ID, Franchise, Location, Rating, and Comment.</p>
-<input type="file" id="csv-file" accept=".csv,text/csv" aria-label="Customer review CSV">
-<button id="upload" class="secondary">Upload reviews</button>
+<p class="small muted">Upload a CSV or Excel (.xlsx) file with Feedback_ID, Franchise, Location, Rating, and Comment. Up to 500 reviews, under 2 MiB. Excel uses the first worksheet.</p>
+<input type="file" id="csv-file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Customer review CSV or Excel file">
+<button id="upload" class="secondary">Upload and embed reviews</button>
 <p id="upload-status" class="small" role="status">
 </p>
 </details>

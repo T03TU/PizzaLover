@@ -55,7 +55,7 @@ Each question is independent; prior chat messages are not sent as model context.
 New chat clears the displayed conversation, while server evaluation history
 remains until the server restarts. Chat messages are not stored in browser storage.
 
-Use **Add customer reviews** to upload UTF-8 CSV files (up to 500 rows, under
+Use **Add customer reviews** to upload UTF-8 CSV or Excel `.xlsx` files (up to 500 rows, under
 2 MiB including multipart overhead). The required columns are `Feedback_ID`,
 `Franchise`, `Location`, `Rating`, and `Comment`. Ratings must be integers 1–5;
 IDs must start with `FB-` and contain letters, digits, or hyphens. Existing IDs
@@ -74,7 +74,7 @@ The API exposes:
 | --- | --- |
 | `POST /api/chat/stream` | JSON question, filters, eval_enabled; SSE citations → token chunks → metrics → done. Errors emit error → done. |
 | `GET /api/metadata/options` | Distinct indexed franchises/locations and document count. |
-| `POST /api/ingest` | Single review JSON, JSON array, or multipart CSV in the `file` field. |
+| `POST /api/ingest` | Single review JSON, JSON array, or multipart CSV/XLSX in the `file` field. |
 | `GET /api/evaluation/summary` | Session mean/min/max/count plus the latest golden report aggregates. |
 | `POST /api/evaluation/save` | Save session history to `results/evaluation_history.json`, replacing the file. |
 
@@ -140,3 +140,10 @@ key alone does not grant those rights. This importer does not retain author
 attribution and is not a Google review display widget. See
 [Places policies](https://developers.google.com/maps/documentation/places/web-service/policies)
 and [Text Search documentation](https://developers.google.com/maps/documentation/places/web-service/text-search).
+
+Excel uploads read the first worksheet with the same five column headers as CSV.
+Use plain values rather than formulas. The entire batch is validated before
+embedding; duplicate IDs or invalid rows reject the upload. Successful uploads
+are embedded with the configured Ollama embedding model and persisted in Chroma;
+franchise/location filters refresh automatically. Install updated dependencies
+with `pip install -r requirements.txt` to enable Excel support.

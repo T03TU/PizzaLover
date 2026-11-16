@@ -6,7 +6,6 @@ All inference calls use the repository's configured Ollama endpoint.
 
 import asyncio
 import csv
-import io
 import json
 import logging
 import math
@@ -162,7 +161,7 @@ async def metadata(request: Request):
 
 
 async def read_reviews(request):
-    """Parse bounded JSON or multipart CSV, validating the entire batch first."""
+    """Parse bounded JSON or multipart CSV/XLSX, validating the entire batch first."""
     raw = bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)
@@ -175,9 +174,9 @@ async def read_reviews(request):
             async with request.form() as form:
                 upload = form.get("file")
                 if upload is None or not hasattr(upload, "read"):
-                    raise HTTPException(422, "Provide a CSV upload in the 'file' field")
-                text = (await upload.read()).decode("utf-8-sig")
-                rows = list(csv.DictReader(io.StringIO(text)))
+                    raise HTTPException(422, "Provide a CSV or XLSX upload in the 'file' field")
+                from src.review_files import parse_review_file
+                rows = await asyncio.to_thread(parse_review_file, upload.filename, await upload.read())
         else:
             payload = await request.json()
             rows = payload if isinstance(payload, list) else [payload]
@@ -194,7 +193,7 @@ async def read_reviews(request):
 
 @app.post("/api/ingest")
 async def ingest(request: Request):
-    """Persist new review IDs after JSON/CSV validation; reject existing IDs."""
+    """Persist new review IDs after JSON/CSV/XLSX validation; reject existing IDs."""
     from langchain_core.documents import Document
     reviews = await read_reviews(request)
     store = request.app.state.engine.store
