@@ -169,8 +169,10 @@ async def read_reviews(request, inspect=False):
             raise HTTPException(413, "Upload must be smaller than 2 MiB")
     # Starlette caches body for subsequent JSON/form parsing.
     request._body = bytes(raw)
+    is_file = request.headers.get("content-type", "").startswith("multipart/form-data")
+    request.state.skipped_blank_comments = []
     try:
-        if request.headers.get("content-type", "").startswith("multipart/form-data"):
+        if is_file:
             async with request.form() as form:
                 upload = form.get("file")
                 if upload is None or not hasattr(upload, "read"):
@@ -190,11 +192,17 @@ async def read_reviews(request, inspect=False):
             raise HTTPException(422, "Provide between 1 and 500 reviews")
         reviews = []
         for index, row in enumerate(rows, start=1):
+            comment = row.get("Comment") if isinstance(row, dict) else None
+            if is_file and (comment is None or (isinstance(comment, str) and not comment.strip())):
+                request.state.skipped_blank_comments.append(index)
+                continue
             try:
                 reviews.append(Review.model_validate(row))
             except ValidationError as exc:
                 issues = "; ".join(f"{'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors())
                 raise HTTPException(422, f"Review {index}: {issues}. Correct the file or column mapping and retry.") from exc
+        if not reviews:
+            raise HTTPException(422, "No reviews have comment text. Check the column mapped to Comment or provide a file with written reviews.")
         ids = [r.Feedback_ID for r in reviews]
         if len(set(ids)) != len(ids):
             raise HTTPException(409, "Feedback_ID values must be unique within an upload")
@@ -226,7 +234,11 @@ async def ingest(request: Request):
         except Exception as exc:
             logger.exception("Review ingestion failed")
             raise HTTPException(503, "Embedding or storage failed; check Ollama and retry") from exc
-    return {"added": len(reviews)}
+    result = {"added": len(reviews)}
+    if request.state.skipped_blank_comments:
+        result["skipped_blank_comments"] = len(request.state.skipped_blank_comments)
+        result["skipped_reviews"] = request.state.skipped_blank_comments
+    return result
 
 
 @app.post("/api/ingest/google")

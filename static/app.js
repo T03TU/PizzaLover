@@ -265,7 +265,7 @@ $('upload').addEventListener('click', async () => {
     }
     $('upload-status').textContent = 'Embedding and indexing locally…';
     const result = await (await api('/api/ingest', {method:'POST', body:form})).json();
-    $('upload-status').textContent = `${result.added} reviews indexed.`;
+    $('upload-status').textContent = `${result.added} reviews indexed.${result.skipped_blank_comments ? ` ${result.skipped_blank_comments} reviews skipped because their comments were blank (review ${result.skipped_reviews.join(', ')}).` : ''}`;
     await loadMetadata();
   }
   catch (error) { $('upload-status').textContent = error.message; }

@@ -165,3 +165,10 @@ text or integer IDs (including long Google review IDs) become deterministic
 are not truncated or added as extra schema fields. Missing IDs still fail
 validation. This normalization applies to CSV/XLSX uploads, including mapped
 columns; the JSON API retains strict schema validation.
+
+CSV/XLSX rows whose mapped `Comment` is empty, whitespace-only, or missing are
+skipped before embedding. Upload results report `skipped_blank_comments` and
+`skipped_reviews` (one-based review positions, excluding the header), and the UI
+shows these counts and positions. If all comments are blank, the upload is
+rejected with a prompt to check the Comment mapping. Other schema errors still
+reject the batch. JSON submissions retain strict required-comment validation.

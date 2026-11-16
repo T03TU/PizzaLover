@@ -97,6 +97,24 @@ class IngestionTests(unittest.IsolatedAsyncioTestCase):
         with patch('api.server.asyncio.to_thread', side_effect=inline):
             return await (preview_ingestion(request) if preview else ingest(request))
 
+    async def test_blank_comments_skip_and_all_blank_reject(self):
+        stored = []
+        store = SimpleNamespace(get=lambda **kwargs: {'metadatas': []},
+                                add_documents=lambda docs, ids: stored.extend(docs))
+        self.app = SimpleNamespace(state=SimpleNamespace(engine=SimpleNamespace(store=store), model_lock=asyncio.Lock()))
+        columns = ['id', 'shop', 'city', 'stars', 'text']
+        mapping = dict(zip(HEADER, columns))
+        rows = [columns, ROW, ['FB-902'] + ROW[1:4] + ['   '],
+                ['FB-903'] + ROW[1:4] + [None], ['FB-904'] + ROW[1:4] + ['']]
+        result = await self.submit(rows, mapping=mapping)
+        self.assertEqual(result, {'added': 1, 'skipped_blank_comments': 3, 'skipped_reviews': [2, 3, 4]})
+        self.assertEqual(len(stored), 1)
+        with self.assertRaises(HTTPException) as blank:
+            await self.submit([columns] + rows[2:], mapping=mapping)
+        self.assertEqual(blank.exception.status_code, 422)
+        self.assertIn('No reviews have comment text', blank.exception.detail)
+        self.assertEqual(len(stored), 1)
+
     async def test_long_external_id_ingest_and_duplicate(self):
         stored = []
         store = SimpleNamespace(get=lambda **kwargs: {'metadatas': [d.metadata for d in stored]},
