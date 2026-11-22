@@ -53,7 +53,7 @@ class ChatHistory:
     def create_profile(self, name):
         profile = {"id": str(uuid4()), "name": name}
         with self.connect() as db:
-            db.execute("INSERT INTO profiles VALUES (?, ?, ?)", (profile["id"], name, name.casefold()))
+            db.execute("INSERT INTO profiles (id, name, name_key) VALUES (?, ?, ?)", (profile["id"], name, name.casefold()))
         return profile
 
     def chats(self, profile_id):

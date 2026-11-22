@@ -32,10 +32,25 @@ document.querySelectorAll('[data-pane]').forEach(button => {
   button.addEventListener('click', () => setPaneVisible(id, $(id).hidden));
 });
 
+function can(permission) { return !!currentProfile?.permissions.includes(permission); }
+function applyPermissions() {
+  document.querySelectorAll('[data-permission]').forEach(el => { el.hidden = !can(el.dataset.permission); });
+  $('add-profile').hidden = !can('users:create');
+  $('account-summary').textContent = currentProfile ? `${currentProfile.name} · ${currentProfile.role}` : '';
+  $('question').disabled = !can('chat:use');
+  $('eval').disabled = !can('scorecards:view');
+  if (!can('scorecards:view')) { $('eval').checked = false; renderScores(null); }
+  turns.forEach(renderFeedback);
+  updateNavigation();
+}
 function updateNavigation() {
   const busy = historyBusy || !!activeController;
-  for (const id of ['profile', 'add-profile', 'new-chat', 'send']) $(id).disabled = busy;
-  document.querySelectorAll('.history-open, .history-delete').forEach(button => { button.disabled = busy; });
+  $('profile').disabled = true;
+  $('add-profile').disabled = busy || !can('users:create');
+  for (const id of ['new-chat', 'send']) $(id).disabled = busy || !can('chat:use');
+  $('settings').disabled = !currentProfile;
+  $('sign-out').disabled = busy || !currentProfile;
+  document.querySelectorAll('.chips button, .history-open, .history-delete').forEach(button => { button.disabled = busy || !can('chat:use'); });
 }
 function rememberChat() {
   savePreference(`pizzalover.chat.${currentProfile.id}`, activeChatId);
@@ -47,6 +62,7 @@ function clearConversation() {
   renderScores(null);
 }
 async function refreshHistory() {
+  if (!can('chat:use')) { $('history-status').textContent = 'Chat access is not enabled for your role.'; return []; }
   const profileId = currentProfile.id;
   const {chats} = await (await api('/api/chats')).json();
   if (currentProfile.id !== profileId) return [];
@@ -77,8 +93,8 @@ async function loadChat(id, reveal = true) {
   for (const saved of chat.turns) {
     const turn = createTurn(saved.question);
     Object.assign(turn, {text:saved.text || saved.error || 'No answer was returned.', citations:saved.citations,
-      metrics:saved.metrics, error:saved.error, complete:true});
-    renderAnswer(turn); renderTurnFooter(turn); selectTurn(turn);
+      metrics:saved.metrics, error:saved.error, complete:true, id:saved.id, status:saved.status, feedback:saved.feedback});
+    renderAnswer(turn); renderTurnFooter(turn); renderFeedback(turn); selectTurn(turn);
   }
   $('chat-status').textContent = 'Saved chat restored. Each question still uses independent review evidence.';
   if (reveal) setPaneVisible('chat-pane', true);
@@ -90,6 +106,7 @@ async function loadProfiles() {
   $('profile').replaceChildren();
   data.profiles.forEach(profile => $('profile').add(new Option(profile.name, profile.id)));
   $('profile').value = currentProfile.id;
+  applyPermissions();
 }
 async function restoreProfileChat() {
   clearConversation();
@@ -114,7 +131,7 @@ function node(tag, text, className) {
 }
 async function api(path, options = {}) {
   const headers = new Headers(options.headers);
-  if (currentProfile && (path.startsWith('/api/chats') || path === '/api/chat/stream')) headers.set('X-Profile-ID', currentProfile.id);
+  if (currentProfile && !path.startsWith('/api/auth/')) headers.set('X-Profile-ID', currentProfile.id);
   const response = await fetch(path, {...options, headers});
   if (!response.ok) {
     let detail = `Request failed (${response.status})`;
@@ -198,6 +215,41 @@ function renderTurnFooter(turn) {
   const data = turn.metrics;
   turn.footer.textContent = turn.error || (data ? `${data.generation_time.toFixed(2)}s generation · ${data.evaluation_time.toFixed(2)}s evaluation` : '');
 }
+function renderFeedback(turn) {
+  if (!can('feedback:submit') || turn.status !== 'complete' || !turn.id) {
+    turn.feedbackElement?.remove(); turn.feedbackElement = null; return;
+  }
+  if (turn.feedbackElement) return;
+  const box = node('div', undefined, 'feedback-controls'); turn.feedbackElement = box;
+  box.addEventListener('click', event => event.stopPropagation());
+  const form = node('form'); form.hidden = true;
+  const comment = node('textarea'); comment.maxLength = 4000; comment.rows = 2;
+  comment.placeholder = 'Optional comment'; comment.setAttribute('aria-label', 'Optional response feedback comment');
+  comment.value = turn.feedback?.comment || '';
+  const submit = node('button', 'Submit', 'secondary'); submit.type = 'submit';
+  const status = node('p', turn.feedback ? 'Feedback saved. Select a rating to update it.' : ''); status.setAttribute('role', 'status');
+  let rating = turn.feedback?.rating;
+  const buttons = [];
+  for (const [value, label] of [['thumbs_up', '👍 Thumbs Up'], ['thumbs_down', '👎 Thumbs Down']]) {
+    const button = node('button', label, 'secondary'); button.type = 'button'; button.dataset.rating = value;
+    button.setAttribute('aria-pressed', String(rating === value));
+    button.addEventListener('click', () => {
+      rating = value; form.hidden = false;
+      buttons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rating === rating)));
+    }); buttons.push(button); box.append(button);
+  }
+  form.append(comment, submit);
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); submit.disabled = true;
+    try {
+      turn.feedback = await (await api('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message_id:turn.id, rating, comment:comment.value})})).json();
+      status.textContent = 'Feedback saved. Thank you.'; form.hidden = true;
+    } catch (error) { status.textContent = error.message; }
+    finally { submit.disabled = false; }
+  });
+  box.append(form, status); turn.assistant.append(box);
+}
+
 /* Retain incomplete frames between reads; TextDecoder handles split UTF-8 bytes. */
 async function consumeSSE(response, onEvent) {
   const reader = response.body.getReader();
@@ -226,7 +278,7 @@ async function consumeSSE(response, onEvent) {
   } finally { reader.releaseLock(); }
 }
 async function sendQuestion(question) {
-  if (activeController || historyBusy || !currentProfile || !question.trim()) return;
+  if (activeController || historyBusy || !can('chat:use') || !question.trim()) return;
   $('connection-error').hidden = true;
   const turn = createTurn(question.trim());
   const controller = new AbortController(); activeController = controller;
@@ -237,7 +289,7 @@ async function sendQuestion(question) {
   try {
     const filters = {franchise:$('franchise').value || null,location:$('location').value || null,min_rating:Number($('rating').value) || null};
     const response = await api('/api/chat/stream', {method:'POST',headers:{'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({question:question.trim(),filters,eval_enabled:$('eval').checked,chat_id:activeChatId})});
-    activeChatId = response.headers.get('X-Chat-ID'); rememberChat();
+    activeChatId = response.headers.get('X-Chat-ID'); turn.id = response.headers.get('X-Turn-ID'); rememberChat();
     await consumeSSE(response, (name, data) => {
       if (name === 'status') $('chat-status').textContent = data;
       if (name === 'citations') { turn.citations = data; selectTurn(turn); }
@@ -260,6 +312,8 @@ async function sendQuestion(question) {
     if (error.name !== 'AbortError') showError(turn.error);
   } finally {
     turn.complete = true;
+    turn.status = receivedDone && !turn.error ? 'complete' : 'interrupted';
+    renderFeedback(turn);
     if (!turn.text) { turn.text = turn.error || 'No answer was returned.'; renderAnswer(turn); }
     if (turn.error) turn.footer.textContent = turn.error;
     activeController = null; $('send').hidden = false; $('stop').hidden = true; updateNavigation();
@@ -279,6 +333,7 @@ function summaryRows(target, summary) {
   }
 }
 async function refreshSummary() {
+  if (!can('scorecards:view')) return;
   const data = await (await api('/api/evaluation/summary')).json();
   summaryRows($('session-summary'), data.session);
   const count = Math.max(0, ...Object.values(data.session).map(stat => stat.count));
@@ -286,6 +341,7 @@ async function refreshSummary() {
   if (Object.keys(data.golden).length) summaryRows($('golden-summary'), data.golden);
 }
 async function loadMetadata() {
+  if (!can('chat:use')) return;
   const data = await (await api('/api/metadata/options')).json();
   for (const [id, values] of [['franchise',data.franchises],['location',data.locations]]) {
     const el = $(id); const previous = el.value;
@@ -305,15 +361,16 @@ $('new-chat').addEventListener('click', () => {
   $('chat-status').textContent = 'New chat. Previous conversations are saved in chat history.'; $('question').focus();
   refreshHistory().catch(error => showError(error.message));
 });
-$('profile').addEventListener('change', () => navigateHistory(async () => {
+$('add-profile').addEventListener('click', async () => {
+  $('profile-form').reset(); $('profile-error').textContent = ''; $('profile-role').replaceChildren(new Option('USER', 'USER'));
   try {
-    await api(`/api/profiles/${$('profile').value}/select`, {method:'POST'});
-    clearConversation();
-    await loadProfiles(); await restoreProfileChat();
-  } finally { $('profile').value = currentProfile.id; }
-}));
-$('add-profile').addEventListener('click', () => {
-  $('profile-form').reset(); $('profile-error').textContent = ''; $('profile-dialog').showModal();
+    if (can('roles:manage')) {
+      const {roles} = await (await api('/api/roles')).json();
+      $('profile-role').replaceChildren(...roles.map(role => new Option(role.name, role.name)));
+      $('profile-role').value = 'USER';
+    }
+    $('profile-dialog').showModal();
+  } catch (error) { showError(error.message); }
 });
 $('profile-cancel').addEventListener('click', () => $('profile-dialog').close());
 $('profile-form').addEventListener('submit', async event => {
@@ -322,9 +379,9 @@ $('profile-form').addEventListener('submit', async event => {
   if (!name || historyBusy || activeController) return;
   historyBusy = true; updateNavigation(); $('profile-create').disabled = true;
   try {
-    await api('/api/profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
-    clearConversation();
-    await loadProfiles(); await restoreProfileChat(); $('profile-dialog').close();
+    await api('/api/profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, password:$('profile-password').value, role:$('profile-role').value})});
+    $('profile-dialog').close();
+    if ($('users-dialog').open) await loadUsers();
   } catch (error) { $('profile-error').textContent = error.message; }
   finally { historyBusy = false; updateNavigation(); $('profile-create').disabled = false; }
 });
@@ -404,16 +461,49 @@ $('upload').addEventListener('click', async () => {
   finally { $('upload').disabled = false; }
 });
 renderScores(null);
-updateNavigation();
+applyPermissions();
+
+async function startAccount() {
+  await loadProfiles(); await restoreProfileChat();
+  await Promise.all([loadMetadata(), refreshSummary()]);
+  historyBusy = false; updateNavigation();
+}
+let setupRequired = false;
 (async () => {
-  try { await loadProfiles(); await restoreProfileChat(); historyBusy = false; }
-  catch (error) { showError(`Could not load local profiles and history: ${error.message}. Reload to retry.`); }
-  finally { updateNavigation(); }
+  try {
+    const status = await (await api('/api/auth/status')).json();
+    setupRequired = status.setup_required;
+    if (!setupRequired) {
+      const response = await fetch('/api/profiles');
+      if (response.ok) { await startAccount(); return; }
+    }
+    $('setup-fields').hidden = !setupRequired;
+    $('setup-token').required = setupRequired;
+    $('auth-password').minLength = setupRequired ? 12 : 1;
+    $('auth-title').textContent = setupRequired ? 'Set up administrator' : 'Sign in';
+    $('auth-help').textContent = setupRequired ? 'Use the setup token printed in the server console and choose a password of at least 12 characters. Existing installations keep the oldest profile as administrator.' : 'Use your account name and password.';
+    $('auth-dialog').showModal();
+  } catch (error) { showError(error.message); }
 })();
-Promise.all([loadMetadata(), refreshSummary()]).catch(() => {
-  $('corpus-count').textContent = 'Review index unavailable';
-  showError('Cannot connect to the local engine. Start FastAPI and check Ollama is running.');
+$('auth-dialog').addEventListener('cancel', event => event.preventDefault());
+$('auth-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.submitter; button.disabled = true;
+  try {
+    const body = {name:$('auth-name').value.trim(), password:$('auth-password').value};
+    if (setupRequired) body.token = $('setup-token').value.trim();
+    await api(setupRequired ? '/api/auth/setup' : '/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    $('auth-password').value = ''; $('setup-token').value = '';
+    $('auth-dialog').close(); await startAccount();
+  } catch (error) { $('auth-error').textContent = error.message; }
+  finally { button.disabled = false; }
 });
+$('sign-out').addEventListener('click', async () => {
+  try { await api('/api/auth/logout', {method:'POST'}); location.reload(); }
+  catch (error) { showError(error.message); }
+});
+$('settings').addEventListener('click', () => $('settings-dialog').showModal());
+document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => $(button.dataset.close).close()));
 
 $('google-ingest-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -426,4 +516,132 @@ $('google-ingest-form').addEventListener('submit', async event => {
     await loadMetadata();
   } catch (error) { $('google-status').textContent = error.message; }
   finally { $('google-import').disabled = false; }
+});
+
+function renderPipeline(result) {
+  const table = node('table'); const head = node('tr');
+  result.columns.forEach(column => head.append(node('th', column)));
+  const thead = node('thead'); thead.append(head); table.append(thead);
+  const body = node('tbody');
+  result.rows.forEach(row => { const tr = node('tr'); row.forEach(cell => tr.append(node('td', cell === null ? 'NULL' : String(cell)))); body.append(tr); });
+  table.append(body); $('pipeline-results').replaceChildren(table);
+  $('pipeline-status').textContent = `${result.affected_rows} rows changed. ${result.row_count} result rows${result.truncated ? ' (preview limited to 500)' : ''}.`;
+}
+let pipelineBusy = false;
+async function pipelineAction(action) {
+  if (pipelineBusy) return;
+  pipelineBusy = true;
+  for (const id of ['run-sql', 'stage-upload', 'embed-staged']) $(id).disabled = true;
+  $('pipeline-status').textContent = 'Working…';
+  try { await action(); }
+  catch (error) { $('pipeline-status').textContent = error.message; }
+  finally { pipelineBusy = false; for (const id of ['run-sql', 'stage-upload', 'embed-staged']) $(id).disabled = false; }
+}
+$('open-pipeline').addEventListener('click', () => {
+  $('pipeline-dialog').showModal();
+  pipelineAction(async () => renderPipeline(await (await api('/api/pipeline')).json()));
+});
+$('sql-form').addEventListener('submit', event => {
+  event.preventDefault();
+  pipelineAction(async () => {
+    renderPipeline(await (await api('/api/pipeline/query', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({sql:$('pipeline-sql').value})})).json());
+  });
+});
+$('stage-upload').addEventListener('click', () => pipelineAction(async () => {
+  const file = $('stage-file').files[0]; if (!file) throw new Error('Choose a CSV or XLSX file first.');
+  const data = new FormData(); data.append('file', file);
+  const preview = await (await api('/api/ingest/preview', {method:'POST', body:data})).json();
+  if (preview.requires_mapping) {
+    const mapping = await chooseColumnMapping(preview);
+    if (!mapping) { $('pipeline-status').textContent = 'Upload cancelled.'; return; }
+    data.append('mapping', JSON.stringify(mapping));
+  }
+  const result = await (await api('/api/pipeline/stage', {method:'POST', body:data})).json();
+  renderPipeline(await (await api('/api/pipeline')).json());
+  $('pipeline-status').textContent = `${result.staged} reviews staged; ${result.skipped_blank_comments} blank comments skipped. Edit the data, then generate embeddings.`;
+}));
+$('embed-staged').addEventListener('click', () => pipelineAction(async () => {
+  const result = await (await api('/api/pipeline/embed', {method:'POST'})).json();
+  renderPipeline(await (await api('/api/pipeline')).json());
+  $('pipeline-status').textContent = `${result.added} updated reviews embedded and removed from staging.`;
+  await loadMetadata();
+}));
+
+let roleData = [];
+let permissionNames = [];
+function fillRoleForm() {
+  const role = roleData.find(r => r.name === $('role-select').value);
+  $('role-name').value = role?.name || ''; $('role-name').readOnly = !!role;
+  $('permission-fields').replaceChildren();
+  for (const permission of permissionNames) {
+    const label = node('label'); const checkbox = node('input'); checkbox.type = 'checkbox';
+    checkbox.value = permission; checkbox.checked = role?.permissions.includes(permission) || false;
+    label.append(checkbox, document.createTextNode(permission)); $('permission-fields').append(label);
+  }
+  $('role-delete').hidden = !role || ['ADMIN', 'USER'].includes(role.name);
+}
+async function loadRoles(selectedName = '') {
+  const data = await (await api('/api/roles')).json(); roleData = data.roles; permissionNames = data.permissions;
+  $('role-select').replaceChildren(new Option('Create new role…', ''), ...roleData.map(role => new Option(role.name, role.name)));
+  $('role-select').value = selectedName; fillRoleForm();
+}
+$('open-roles').addEventListener('click', async () => {
+  $('role-status').textContent = ''; $('roles-dialog').showModal();
+  try { await loadRoles(); } catch (error) { $('role-status').textContent = error.message; }
+});
+$('role-select').addEventListener('change', fillRoleForm);
+$('role-form').addEventListener('submit', async event => {
+  event.preventDefault(); $('role-save').disabled = true;
+  try {
+    const existing = $('role-select').value; const name = $('role-name').value;
+    const permissions = [...$('permission-fields').querySelectorAll('input:checked')].map(input => input.value);
+    await api(existing ? `/api/roles/${encodeURIComponent(existing)}` : '/api/roles', {method:existing ? 'PUT' : 'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, permissions})});
+    await loadProfiles();
+    if (can('roles:manage')) await loadRoles(name); else $('roles-dialog').close();
+    $('role-status').textContent = 'Role saved.';
+  } catch (error) { $('role-status').textContent = error.message; }
+  finally { $('role-save').disabled = false; }
+});
+$('role-delete').addEventListener('click', async () => {
+  $('role-delete').disabled = true;
+  try { await api(`/api/roles/${encodeURIComponent($('role-select').value)}`, {method:'DELETE'}); await loadRoles(); $('role-status').textContent = 'Role deleted.'; }
+  catch (error) { $('role-status').textContent = error.message; }
+  finally { $('role-delete').disabled = false; }
+});
+async function loadUsers() {
+  const {users} = await (await api('/api/users')).json();
+  const roles = can('roles:manage') ? (await (await api('/api/roles')).json()).roles : [{name:'USER'}];
+  $('users-list').replaceChildren();
+  for (const user of users) {
+    const form = node('form', undefined, 'user-editor');
+    form.append(node('h3', `${user.name} · ${user.role}${user.active ? '' : ' · inactive'}`));
+    if (can('roles:manage')) {
+      const select = node('select'); select.setAttribute('aria-label', `Role for ${user.name}`);
+      roles.forEach(role => select.add(new Option(role.name, role.name))); select.value = user.role;
+      const active = node('input'); active.type = 'checkbox'; active.checked = !!user.active;
+      const label = node('label'); label.append(active, document.createTextNode(' Active account'));
+      const password = node('input'); password.type = 'password'; password.minLength = 12; password.maxLength = 256;
+      password.autocomplete = 'new-password'; password.placeholder = 'New password (optional, at least 12 characters)';
+      password.setAttribute('aria-label', `New password for ${user.name}`);
+      const save = node('button', 'Save user', 'secondary'); save.type = 'submit';
+      form.append(select, label, password, save);
+      form.addEventListener('submit', async event => {
+        event.preventDefault(); save.disabled = true;
+        try {
+          const body = {role:select.value, active:active.checked}; if (password.value) body.password = password.value;
+          await api(`/api/users/${user.id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+          if (user.id === currentProfile.id && password.value) { location.reload(); return; }
+          await loadProfiles();
+          if (can('users:create')) await loadUsers(); else $('users-dialog').close();
+          $('users-status').textContent = 'User saved.';
+        } catch (error) { $('users-status').textContent = error.message; }
+        finally { save.disabled = false; }
+      });
+    }
+    $('users-list').append(form);
+  }
+}
+$('open-users').addEventListener('click', async () => {
+  $('users-status').textContent = ''; $('users-dialog').showModal();
+  try { await loadUsers(); } catch (error) { $('users-status').textContent = error.message; }
 });

@@ -69,6 +69,7 @@ SYNTHETIC_GOLDEN_JSON = SYNTHETIC_DATA_DIR / "synthetic_golden_dataset.json"
 SYNTHETIC_GOLDEN_CSV = SYNTHETIC_DATA_DIR / "synthetic_golden_dataset.csv"
 CHROMA_DB_DIR = DATA_DIR / "chroma_db"
 CHAT_HISTORY_PATH = DATA_DIR / "chat_history.sqlite3"
+STAGING_PATH = DATA_DIR / "staging.sqlite3"
 
 # Standardized test fixtures and legacy compatibility paths
 TEST_DATASET_PATH = FIXTURES_DIR / "pizza_feedback_50_entries.csv"

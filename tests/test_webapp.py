@@ -104,14 +104,19 @@ class WebTests(unittest.TestCase):
         self.history_dir = tempfile.TemporaryDirectory()
         self.history_patch = patch('config.CHAT_HISTORY_PATH', Path(self.history_dir.name) / 'chats.sqlite3')
         self.history_patch.start()
+        self.staging_patch = patch('config.STAGING_PATH', Path(self.history_dir.name) / 'staging.sqlite3')
+        self.staging_patch.start()
         self.client = TestClient(app)
         self.client.__enter__()
+        self.client.post('/api/auth/setup', json={'name': 'Admin', 'password': 'admin-password-123',
+                         'token': app.state.access.setup_token})
 
     def tearDown(self):
         """Close resources and restore production construction."""
         self.client.__exit__(None,None,None)
         self.patch.stop()
         self.history_patch.stop()
+        self.staging_patch.stop()
         self.history_dir.cleanup()
 
     def stream(self, **kwargs):
@@ -219,17 +224,20 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.client.get('/api/chats').json()['chats'][0]['turn_count'], 2)
 
     def test_profile_scoping_and_switching(self):
-        """Another profile cannot list, fetch, append to, or delete the owner's chats."""
-        alice = self.client.post('/api/profiles', json={"name": "Alice"}).json()
+        """Signing in to another account cannot expose the owner's saved chats."""
+        alice = self.client.post('/api/profiles', json={"name": "Alice", "password": "alice-password-123"}).json()
+        self.assertEqual(self.client.post('/api/profiles', json={"name": "Bob", "password": "bob-password-123"}).status_code, 201)
+        self.client.post('/api/auth/login', json={'name': 'Alice', 'password': 'alice-password-123'})
         response = self.client.post('/api/chat/stream', json={"question": "Alice's question", "eval_enabled": False})
         chat_id = response.headers['X-Chat-ID']
-        self.assertEqual(self.client.post('/api/profiles', json={"name": "Bob"}).status_code, 201)
+        self.client.post('/api/auth/login', json={'name': 'Bob', 'password': 'bob-password-123'})
         self.assertEqual(self.client.get('/api/chats').json()['chats'], [])
         self.assertEqual(self.client.get(f'/api/chats/{chat_id}').status_code, 404)
         self.assertEqual(self.client.delete(f'/api/chats/{chat_id}').status_code, 404)
-        self.assertEqual(self.client.post('/api/chat/stream', json={"question": "Wrong profile", "chat_id": chat_id}).status_code, 404)
+        self.assertEqual(self.client.post('/api/chat/stream', json={"question": "Wrong account", "chat_id": chat_id}).status_code, 404)
         self.assertEqual(self.client.get('/api/chats', headers={'X-Profile-ID': alice['id']}).status_code, 409)
-        self.assertEqual(self.client.post(f"/api/profiles/{alice['id']}/select").status_code, 200)
+        self.assertEqual(self.client.post(f"/api/profiles/{alice['id']}/select").status_code, 403)
+        self.client.post('/api/auth/login', json={'name': 'Alice', 'password': 'alice-password-123'})
         self.assertEqual(len(self.client.get('/api/chats').json()['chats']), 1)
         self.assertEqual(self.client.delete(f'/api/chats/{chat_id}').status_code, 204)
         self.assertEqual(self.client.get(f'/api/chats/{chat_id}').status_code, 404)
@@ -237,16 +245,18 @@ class WebTests(unittest.TestCase):
             self.assertEqual(db.execute('SELECT COUNT(*) FROM turns').fetchone()[0], 0)
 
     def test_profile_validation_and_cookie(self):
-        """Profiles have bounded unique names and the browser remembers its selection."""
+        """Accounts have bounded unique names and opaque authenticated cookies."""
+        self.client.post('/api/auth/logout')
         self.assertEqual(self.client.get('/api/chats').status_code, 401)
-        response = self.client.get('/api/profiles')
-        guest = response.json()['current']
+        response = self.client.post('/api/auth/login', json={'name': 'Admin', 'password': 'admin-password-123'})
         self.assertIn('HttpOnly', response.headers['set-cookie'])
-        self.assertEqual(self.client.get('/api/profiles').json()['current'], guest)
-        self.assertEqual(self.client.post('/api/profiles', json={'name': ' Alice '}).json()['name'], 'Alice')
-        self.assertEqual(self.client.post('/api/profiles', json={'name': 'alice'}).status_code, 409)
+        self.assertIn('SameSite=strict', response.headers['set-cookie'])
+        admin = response.json()
+        self.assertEqual(self.client.get('/api/profiles').json()['current'], admin)
+        self.assertEqual(self.client.post('/api/profiles', json={'name': ' Alice ', 'password': 'alice-password-123'}).json()['name'], 'Alice')
+        self.assertEqual(self.client.post('/api/profiles', json={'name': 'alice', 'password': 'alice-password-123'}).status_code, 409)
         for name in ('', '   ', 'a' * 81):
-            self.assertEqual(self.client.post('/api/profiles', json={'name': name}).status_code, 422)
+            self.assertEqual(self.client.post('/api/profiles', json={'name': name, 'password': 'alice-password-123'}).status_code, 422)
         self.assertEqual(self.client.get('/api/chats/not-a-uuid').status_code, 422)
 
     def test_failed_and_interrupted_queries_remain_in_history(self):

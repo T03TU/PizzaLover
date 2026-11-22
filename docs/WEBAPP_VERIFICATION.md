@@ -5,7 +5,7 @@ No review ingestion tests write to the production index.
 
 ## Automated checks
 
-- `venv/bin/python -m unittest discover -s tests -v`: 26 passing tests.
+- `venv/bin/python -m unittest discover -s tests -v`: 39 passing tests.
 - `node tests/test_sse_parser.cjs`: passes byte-by-byte UTF-8 chunks, split SSE
   frames, CRLF separators, evaluation heartbeat status, and termination events.
 - `node --check static/app.js`: passes.
@@ -17,10 +17,18 @@ filters, empty results, disabled evaluation, invalid requests, static assets,
 CSV/JSON ingestion, duplicate IDs, history saving, golden CSV summaries, explicit
 stream errors, and compatibility with Document inputs to the shared chain.
 Temporary SQLite databases verify saved queries, answers, sources, metrics,
-filters, restart persistence, profile selection/isolation, chat continuation and
-deletion, failed/interrupted turns, and stale profile requests from other tabs.
+filters, restart persistence, authenticated account isolation, chat continuation and
+deletion, failed/interrupted turns, and stale account requests from other tabs. Permission tests cover the six granular
+permissions, custom role creation/revocation, score redaction, migration,
+password/session handling and last-admin protection. Pipeline tests cover staging
+without embedding, SQL isolation, atomic rejection, validation, persistence and
+embedding failure. Feedback tests verify ownership, completion, metadata, rating
+updates and durable storage.
 
-## Local integration checks
+The current feature checks use fake inference and temporary databases. Live
+Ollama/model integration was not rerun for the RBAC, pipeline and feedback work.
+
+## Earlier local integration checks
 
 - Ollama reports `llama3.2` and `mxbai-embed-large` installed.
 - Uvicorn serves `/` with HTTP 200.
@@ -45,16 +53,29 @@ quality guarantee; local model quality varies by question. Missing metric
 values are displayed explicitly rather than replaced with invented scores.
 `pip check` reports no broken requirements.
 
+To run the optional browser regression (Playwright must be installed):
+
+```bash
+# Terminal 1
+venv/bin/python tests/ui_server.py
+# Terminal 2
+node tests/test_chat_ui.cjs
+# Or set PLAYWRIGHT_PATH to a separate installation's playwright module path.
+```
+
+The test server seeds `Admin` / `admin-password-123` only in temporary storage.
 The optional `tests/test_chat_ui.cjs` browser regression runs in headless Chrome
 against `tests/ui_server.py`, which uses fake inference and temporary storage.
-It verifies profile creation/switching, saved chat restoration/continuation/deletion,
+It verifies password sign-in, user creation, account isolation, permissions in
+Settings, custom roles, pipeline staging/SQL/embedding, feedback persistence,
+scorecard/feedback hiding for restricted roles, saved chat restoration/continuation,
 citation reopening, interrupted query persistence, and all eight pane visibility
 combinations at 1440, 1000, 850, and 390 pixels without horizontal overflow.
 Pane visibility and the active conversation survive reloads. Desktop and phone
 screenshots were also inspected. These checks exercise the actual UI and API;
 they do not invoke or change the production review index or model.
 
-The final two-case golden benchmark was rerun with the updated dependencies:
+The earlier two-case golden benchmark was rerun with the updated dependencies:
 all 12 scoring jobs completed, all six metrics returned numeric values for
 both cases, and the CSV export succeeded (about 327 seconds of evaluation).
 The low faithfulness/context precision scores remain visible; successful

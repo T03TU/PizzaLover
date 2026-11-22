@@ -37,7 +37,11 @@ ollama pull mxbai-embed-large
 uvicorn api.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open **http://127.0.0.1:8000**. Keep one Uvicorn worker: resources, the model
+Open **http://127.0.0.1:8000**. On first start, copy the **account setup token**
+from the server console into the setup dialog and set an administrator password
+(at least 12 characters). The token is single use and changes on restart until
+setup is completed. Subsequent visits require an account name and password.
+Keep one Uvicorn worker: resources, the model
 lock, and evaluation history belong to that server session. API documentation
 is available at `/docs`. Existing CLI commands remain available:
 
@@ -101,8 +105,9 @@ Each question retrieves up to three matching reviews. Answers stream first;
 optional Ragas scoring follows. Click an inline feedback ID to highlight its
 source, or click an earlier answer to restore that turn's evidence and scores.
 Each question is independent; prior chat messages are not sent as model context.
-New chat clears the displayed conversation, while server evaluation history
-remains until the server restarts. Chat messages are not stored in browser storage.
+New chat clears the displayed conversation. Conversations, evidence, filters and
+turn metrics persist in SQLite for the signed-in account; session evaluation
+aggregates remain until restart. Chat messages are not stored in browser storage.
 
 Use **Add customer reviews** to upload UTF-8 CSV or Excel `.xlsx` files (up to 500 rows, under
 2 MiB including multipart overhead). The required columns are `Feedback_ID`,
@@ -112,7 +117,11 @@ are rejected. The whole upload is validated before embedding/indexing. JSON
 reviews can also be posted directly:
 
 ```bash
-curl http://127.0.0.1:8000/api/ingest \
+# Sign in as an account with pipeline:manage, keeping its session cookie.
+curl -c /tmp/pizzalover-cookies http://127.0.0.1:8000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Admin","password":"YOUR_PASSWORD"}'
+curl -b /tmp/pizzalover-cookies http://127.0.0.1:8000/api/ingest \
   -H 'Content-Type: application/json' \
   -d '{"Feedback_ID":"FB-051","Franchise":"Sals","Location":"Downtown","Rating":5,"Comment":"Great pepperoni."}'
 ```
@@ -145,7 +154,94 @@ and at most two retries, to reduce contention on local hardware. Missing/failed 
 scores display as unavailable. The UI can stop reading a response; an already
 running synchronous judge finishes before another model workload starts.
 The app is intended for a trusted local machine and binds to loopback in the
-command above; it does not add authentication or external hosting.
+command above; it uses password authentication and local sessions, and does not add external hosting.
+
+### Permissions, accounts and migration
+
+The six supported permissions are `chat:use`, `scorecards:view`,
+`feedback:submit`, `users:create`, `pipeline:manage`, and `roles:manage`.
+`USER` starts with the first three; `ADMIN` starts with all six. **Settings** is
+available to every signed-in account. Its pipeline, role and user management
+options are visible only with the corresponding permission. The API checks
+permissions independently and returns 403 for authenticated, unauthorized
+requests (401 for missing/expired credentials). Chat-only roles cannot obtain
+scores from SSE, saved chats, or evaluation endpoints.
+
+Use **＋ User** to create password-protected accounts. `users:create` permits
+creating default USER accounts; assigning other roles also requires
+`roles:manage`. **Settings → Roles and permissions** creates custom named roles
+and toggles their permissions. **Manage users** lists accounts; updating roles,
+passwords or active status requires both `users:create` and `roles:manage`.
+Default roles cannot be deleted. An assigned custom role must be reassigned
+before deletion. The last active ADMIN cannot be demoted or deactivated, and
+`roles:manage` cannot be removed from ADMIN. These operations use serialized
+SQLite transactions. Role changes affect existing sessions on their next request;
+password resets and deactivation revoke sessions.
+
+Existing profiles keep their IDs, names and saved chats. On the first migration,
+the oldest profile becomes ADMIN and the remaining profiles become USER. The
+one-time setup sets the password on that existing ADMIN (the setup name field is
+ignored). That administrator then sets passwords for the other migrated accounts
+in **Manage users**. Passwordless profile switching and automatic guest accounts
+are replaced by sign-in. No profile or conversation data is deleted. Back up
+`data/chat_history.sqlite3` before upgrading. Passwords use salted scrypt hashes;
+sessions use opaque random cookies with HttpOnly/SameSite=Strict and server-side
+expiry. HTTPS sets Secure cookies. Run behind HTTPS if exposing the service
+beyond the trusted local machine.
+
+### Pre-embedding data pipeline
+
+Open **Settings → Data Pipeline Management** with `pipeline:manage`. Upload a CSV
+or XLSX file into staging (column mapping is supported), inspect the table, and
+run SQL to correct values before generating embeddings. The existing direct
+upload and Google import also require `pipeline:manage`.
+
+```sql
+SELECT * FROM staging_reviews LIMIT 100;
+UPDATE staging_reviews SET Franchise = trim(Franchise);
+UPDATE staging_reviews SET Location = 'Auckland CBD' WHERE Location = 'Auck CBD';
+```
+
+The separate `data/staging.sqlite3` database contains only `staging_reviews`, with
+the five review columns. SELECT, INSERT, UPDATE and DELETE are allowed. SQLite's
+statement authorizer rejects access to other tables, schema changes, PRAGMA,
+ATTACH, extension loading and unapproved functions; multiple statements are
+rejected. SQL has length/execution limits and previews return at most 500 rows.
+Query errors roll back changes. **Generate embeddings** validates all staged
+reviews and checks indexed IDs before using the configured embedding model.
+Successful embedding clears staging and refreshes filters. Staging edits and
+embedding are serialized so the embedded data matches the edited snapshot.
+Invalid data or model errors retain staging for correction. A model/storage
+failure can partially write the vector index; if a retry reports indexed IDs,
+remove those rows from staging before retrying. Embedding batches are limited
+to 500 rows.
+
+### Response feedback
+
+Accounts with `feedback:submit` see thumbs up/down beneath completed responses,
+including restored chats. Selecting a rating reveals an optional comment and
+Submit button. Failed/interrupted turns cannot receive feedback. Feedback is
+saved in `response_feedback` in `data/chat_history.sqlite3`, with rating, comment,
+message ID (the saved turn ID), user ID, role at submission, and a UTC timestamp.
+A user can update their rating/comment; one record per response/user is retained.
+Feedback survives restarts and chat deletion for logging. The API verifies
+response ownership and completion and derives identity/role/time on the server.
+
+Additional API endpoints (all except auth status/setup/login require sign-in):
+
+| Endpoint | Permission / behavior |
+| --- | --- |
+| `GET /api/auth/status`, `POST /api/auth/setup` | One-time console-token setup |
+| `POST /api/auth/login`, `POST /api/auth/logout` | Start/end a browser session |
+| `GET /api/profiles` | Current account and permissions |
+| `GET/POST /api/users` | `users:create`; list/create accounts |
+| `PATCH /api/users/{id}` | `users:create` + `roles:manage`; role/active/password updates |
+| `GET/POST /api/roles`, `PUT/DELETE /api/roles/{name}` | `roles:manage` |
+| `GET /api/pipeline` | `pipeline:manage`; staging preview |
+| `POST /api/pipeline/stage` | `pipeline:manage`; validated JSON/CSV/XLSX staging |
+| `POST /api/pipeline/query` | `pipeline:manage`; `{"sql":"SELECT ..."}` |
+| `POST /api/pipeline/embed` | `pipeline:manage`; embed and clear staging |
+| `POST /api/feedback` | `feedback:submit`; `{"message_id":"UUID","rating":"thumbs_up","comment":"optional"}` |
 
 ### Verification
 
@@ -157,7 +253,9 @@ node tests/test_sse_parser.cjs
 
 Tests inject an in-memory engine and exercise real FastAPI routes/lifespan,
 SSE ordering, filters, disabled evaluation, invalid input, CSV/JSON ingestion,
-duplicate handling, history saves, golden summaries, and legacy chain inputs.
+duplicate handling, saved conversations, role migration, permission denials, admin
+lockout, SQL isolation, staging/embedding, feedback ownership, golden summaries,
+and legacy chain inputs.
 They do not require Ollama or modify the real review index.
 
 ### Google pizza review ingestion

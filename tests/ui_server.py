@@ -26,6 +26,11 @@ class BrowserChain(FakeChain):
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as directory:
         config.CHAT_HISTORY_PATH = Path(directory) / "chats.sqlite3"
+        config.STAGING_PATH = Path(directory) / "staging.sqlite3"
+        from src.chat_history import ChatHistory
+        from src.access import Access
+        access = Access(ChatHistory(config.CHAT_HISTORY_PATH))
+        access.setup(access.setup_token, 'Admin', 'admin-password-123')
         chain = BrowserChain()
         server.create_engine = lambda: SimpleNamespace(store=FakeStore(), chain=chain, evaluator=FakeEvaluator(chain))
         uvicorn.run(server.app, host="127.0.0.1", port=8765, log_level="warning")

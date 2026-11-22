@@ -20,10 +20,12 @@
 <i>
 </i> Local models. Local knowledge.</div>
 <div class="profile-control">
-<label for="profile">Local profile</label>
+<label for="profile">Account</label>
 <select id="profile" aria-describedby="profile-help" disabled><option>Loading…</option></select>
-<button id="add-profile" class="subtle" disabled>＋ Profile</button>
+<button id="add-profile" class="subtle" disabled>＋ User</button>
 </div>
+<button id="settings" class="subtle" disabled>Settings</button>
+<button id="sign-out" class="subtle" disabled>Sign out</button>
 <button id="new-chat" class="subtle">＋ New chat</button>
 </header>
 <nav class="pane-controls" aria-label="Show or hide workspace panes">
@@ -36,7 +38,7 @@
 <aside class="sidebar" id="sidebar" aria-label="Controls and chat history">
 <details class="chat-history" open>
 <summary>Chat history</summary>
-<p id="profile-help" class="small muted">Named profiles in this app. Anyone using this app can switch profiles; these are not private accounts.</p>
+<p id="profile-help" class="small muted">Your conversations are saved to your signed-in account.</p>
 <div id="chat-list" aria-label="Saved conversations"></div>
 <p id="history-status" class="small muted" role="status">Loading saved chats…</p>
 </details>
@@ -64,7 +66,7 @@
 </form>
 <div class="divider">
 </div>
-<div class="toggle-row">
+<div class="toggle-row" data-permission="scorecards:view">
 <div>
 <h3>Ragas auto-evaluation</h3>
 <p class="muted small">A quality check after every answer</p>
@@ -75,8 +77,8 @@
 </span>
 </label>
 </div>
-<p class="small muted">Scored on your machine. Evaluation may take a little longer.</p>
-<section class="quality">
+<p data-permission="scorecards:view" class="small muted">Scored on your machine. Evaluation may take a little longer.</p>
+<section class="quality" data-permission="scorecards:view">
 <div class="section-label">SESSION QUALITY <span id="session-count">0 turns</span>
 </div>
 <div id="session-summary" class="small muted">Your evaluated answers will build a picture here.</div>
@@ -84,7 +86,7 @@
 <p id="save-status" class="small" role="status">
 </p>
 </section>
-<details class="ingestion">
+<details class="ingestion" data-permission="pipeline:manage">
 <summary>Add customer reviews</summary>
 <p class="small muted">Upload a CSV or Excel (.xlsx) file with Feedback_ID, Franchise, Location, Rating, and Comment. Up to 500 reviews, under 2 MiB. Excel uses the first worksheet.</p>
 <input type="file" id="csv-file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Customer review CSV or Excel file">
@@ -92,7 +94,7 @@
 <p id="upload-status" class="small" role="status">
 </p>
 </details>
-<details class="ingestion">
+<details class="ingestion" data-permission="pipeline:manage">
 <summary>Import Google reviews</summary>
 <form id="google-ingest-form">
 <label for="google-country">Country code</label>
@@ -167,7 +169,7 @@
 </div>
 <div id="reviews">
 </div>
-<section class="scorecard">
+<section class="scorecard" data-permission="scorecards:view">
 <div class="section-label">TURN QUALITY <span class="tag">RAGAS</span>
 </div>
 <h3>A little transparency.</h3>
@@ -176,7 +178,7 @@
 </div>
 <p class="small muted score-note">Scores reflect the selected answer. A score is a signal, not a guarantee.</p>
 </section>
-<details id="golden">
+<details id="golden" data-permission="scorecards:view">
 <summary>Latest golden benchmark</summary>
 <div id="golden-summary" class="small muted">No saved benchmark available.</div>
 </details>
@@ -187,14 +189,60 @@
 </div>
 <dialog id="profile-dialog" aria-labelledby="profile-title">
 <form id="profile-form">
-<h2 id="profile-title">Create a local profile</h2>
-<p class="small muted">Chat history is saved separately for each profile on this server. Profiles are not password-protected.</p>
-<label for="profile-name">Profile name</label>
-<input id="profile-name" required maxlength="80" autocomplete="nickname">
+<h2 id="profile-title">Create user</h2>
+<p class="small muted">Share these credentials with the new user securely.</p>
+<label for="profile-name">Account name</label>
+<input id="profile-name" required maxlength="80" autocomplete="off">
+<label for="profile-password">Password (at least 12 characters)</label>
+<input id="profile-password" type="password" minlength="12" maxlength="256" required autocomplete="new-password">
+<label for="profile-role">Role</label><select id="profile-role"><option>USER</option></select>
 <p id="profile-error" role="alert"></p>
 <div class="mapping-actions"><button type="button" id="profile-cancel" class="secondary">Cancel</button>
-<button type="submit" id="profile-create" class="secondary">Create profile</button></div>
+<button type="submit" id="profile-create" class="secondary">Create user</button></div>
 </form>
+</dialog>
+<dialog id="auth-dialog" aria-labelledby="auth-title">
+<form id="auth-form">
+<h2 id="auth-title">Sign in</h2>
+<p id="auth-help" class="small muted">Use your account name and password.</p>
+<div id="setup-fields" hidden><label for="setup-token">Setup token from the server console</label><input id="setup-token" autocomplete="off"></div>
+<label for="auth-name">Account name</label><input id="auth-name" maxlength="80" required autocomplete="username">
+<label for="auth-password">Password</label><input id="auth-password" type="password" maxlength="256" required autocomplete="current-password">
+<p id="auth-error" role="alert"></p><button class="secondary" type="submit">Continue</button>
+</form>
+</dialog>
+<dialog id="settings-dialog" aria-labelledby="settings-title">
+<h2 id="settings-title">Settings</h2><p id="account-summary"></p>
+<div class="settings-options">
+<button id="open-pipeline" data-permission="pipeline:manage" class="secondary">Data Pipeline Management</button>
+<button id="open-roles" data-permission="roles:manage" class="secondary">Roles and permissions</button>
+<button id="open-users" data-permission="users:create" class="secondary">Manage users</button>
+</div><button class="secondary" data-close="settings-dialog">Close</button>
+</dialog>
+<dialog id="pipeline-dialog" aria-labelledby="pipeline-title">
+<h2 id="pipeline-title">Data Pipeline Management</h2>
+<p>Stage reviews, clean them with SQL, then generate embeddings. Available table: <code>staging_reviews</code> (Feedback_ID, Franchise, Location, Rating, Comment).</p>
+<label for="stage-file">Stage CSV or Excel file</label><input id="stage-file" type="file" accept=".csv,.xlsx">
+<button id="stage-upload" class="secondary">Upload to staging</button>
+<form id="sql-form"><label for="pipeline-sql">SQL query</label>
+<textarea id="pipeline-sql" rows="6" required maxlength="20000" spellcheck="false">SELECT * FROM staging_reviews LIMIT 100;</textarea>
+<p class="small muted">SELECT, INSERT, UPDATE and DELETE are allowed only on staging_reviews. Example: UPDATE staging_reviews SET Franchise = trim(Franchise);</p>
+<button id="run-sql" class="secondary" type="submit">Run SQL</button></form>
+<p id="pipeline-status" role="status"></p><div id="pipeline-results" class="table-scroll" tabindex="0" aria-label="SQL results"></div>
+<div class="mapping-actions"><button id="embed-staged" class="secondary">Generate embeddings</button><button class="secondary" data-close="pipeline-dialog">Close</button></div>
+</dialog>
+<dialog id="roles-dialog" aria-labelledby="roles-title">
+<h2 id="roles-title">Roles and permissions</h2>
+<label for="role-select">Existing role</label><select id="role-select"></select>
+<form id="role-form"><label for="role-name">Role name</label><input id="role-name" required maxlength="50" placeholder="e.g. Review analyst">
+<p class="small muted">Use letters, numbers, spaces, underscores or hyphens.</p><div id="permission-fields"></div>
+<div class="mapping-actions"><button id="role-save" class="secondary" type="submit">Save role</button><button id="role-delete" class="secondary" type="button">Delete role</button></div></form>
+<p id="role-status" role="status"></p><button class="secondary" data-close="roles-dialog">Close</button>
+</dialog>
+<dialog id="users-dialog" aria-labelledby="users-title">
+<h2 id="users-title">Manage users</h2><p class="small muted">Role, password and active status changes require roles:manage. Set passwords for migrated accounts here.</p>
+<div id="users-list"></div><p id="users-status" role="status"></p>
+<button class="secondary" data-close="users-dialog">Close</button>
 </dialog>
 <dialog id="column-dialog" aria-labelledby="column-title">
 <form id="column-form">
