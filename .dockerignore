@@ -1,0 +1,34 @@
+# Python virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Version control
+.git/
+.gitignore
+
+# Assistant / Tool configs
+.agents/
+.aws/
+.codex/
+
+# Local databases and runtime state that should be volume-mounted
+data/chat_history.sqlite3*
+
+# Environment and secrets
+.env
+.env.local
+
+# Operating system artifacts
+.DS_Store
+Thumbs.db

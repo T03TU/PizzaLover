@@ -1,0 +1,2 @@
+# Local conversation data must not be committed.
+data/chat_history.sqlite3*

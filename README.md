@@ -196,3 +196,36 @@ embedding; duplicate IDs or invalid rows reject the upload. Successful uploads
 are embedded with the configured Ollama embedding model and persisted in Chroma;
 franchise/location filters refresh automatically. Install updated dependencies
 with `pip install -r requirements.txt` to enable Excel support.
+
+## Troubleshooting
+
+### Port already in use (`[Errno 98] address already in use`)
+
+If Uvicorn or Docker fails to start because port 8000 is occupied (`[Errno 98] error while attempting to bind on address ('127.0.0.1', 8000)`):
+
+1. **Identify the process using port 8000**:
+   ```bash
+   lsof -i :8000
+   # or
+   fuser 8000/tcp
+   ```
+
+2. **Terminate the process**:
+   ```bash
+   kill <PID>
+   # or kill whatever is listening on port 8000 directly:
+   fuser -k 8000/tcp
+   ```
+
+3. **Alternative — run on a different port**:
+   - **Direct Uvicorn**:
+     ```bash
+     uvicorn api.server:app --host 127.0.0.1 --port 8001
+     ```
+   - **Docker Compose**: Change the host port mapping in `docker-compose.yml`:
+     ```yaml
+     ports:
+       - "8001:8000"
+     ```
+   Then access the app at `http://127.0.0.1:8001`.
+
