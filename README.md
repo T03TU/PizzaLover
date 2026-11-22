@@ -47,6 +47,55 @@ python scripts/evaluate_batch.py
 python scripts/evaluate_golden.py --limit 2
 ```
 
+## Running with Docker
+
+You can run PizzaLover anywhere using Docker, with two supported options:
+
+### Mode 1: Connect to Host Ollama (Recommended)
+Use this mode if Ollama is running on your host machine to take advantage of native GPU / Apple Metal acceleration without complex container passthrough:
+
+```bash
+# 1. Ensure required models are pulled on your host
+ollama pull llama3.2
+ollama pull mxbai-embed-large
+
+# 2. Start the web container
+docker compose up
+```
+
+Open **http://127.0.0.1:8000**. The app communicates with host Ollama via `http://host.docker.internal:11434`.
+
+### Mode 2: Fully Dockerized (Web App + Ollama Container)
+Use this mode to run both PizzaLover and Ollama entirely inside Docker:
+
+```bash
+# 1. Start both services
+docker compose --profile with-ollama up -d
+
+# 2. Pull models into the Ollama container
+docker compose exec ollama ollama pull llama3.2
+docker compose exec ollama ollama pull mxbai-embed-large
+
+# 3. View logs
+docker compose logs -f
+```
+
+### Standalone Docker Run (Without Compose)
+```bash
+# Build the image
+docker build -t pizzalover .
+
+# Run pointing to host Ollama
+docker run -d --name pizzalover \
+  -p 8000:8000 \
+  --add-host=host.docker.internal:host-gateway \
+  -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/results:/app/results" \
+  pizzalover
+```
+
+
 The sidebar filters indexed reviews by franchise, location, and minimum rating.
 Each question retrieves up to three matching reviews. Answers stream first;
 optional Ragas scoring follows. Click an inline feedback ID to highlight its

@@ -1,0 +1,48 @@
+services:
+  # PizzaLover web application and RAG engine
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pizzalover-web
+    ports:
+      - "8000:8000"
+    environment:
+      # Defaults to host Ollama (or 'http://ollama:11434' when using the with-ollama profile)
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - LLM_MODEL=${LLM_MODEL:-llama3.2}
+      - EMBEDDING_MODEL=${EMBEDDING_MODEL:-mxbai-embed-large}
+      - RETRIEVER_K=${RETRIEVER_K:-3}
+    volumes:
+      # Persist vector database, uploaded reviews, and chat history
+      - ./data:/app/data
+      # Persist evaluation output files
+      - ./results:/app/results
+    extra_hosts:
+      # Allows the container to resolve host.docker.internal on Linux and macOS/Windows
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+
+  # Optional self-contained Ollama service.
+  # Enable by running: docker compose --profile with-ollama up
+  ollama:
+    image: ollama/ollama:latest
+    container_name: pizzalover-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    profiles:
+      - with-ollama
+    restart: unless-stopped
+    # If using an NVIDIA GPU, uncomment the following block:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+volumes:
+  ollama_models:
