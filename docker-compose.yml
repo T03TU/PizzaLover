@@ -13,6 +13,14 @@ services:
       - LLM_MODEL=${LLM_MODEL:-llama3.2}
       - EMBEDDING_MODEL=${EMBEDDING_MODEL:-mxbai-embed-large}
       - RETRIEVER_K=${RETRIEVER_K:-3}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_TLS=${SMTP_TLS:-starttls}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMS_WEBHOOK_URL=${SMS_WEBHOOK_URL:-}
+      - SMS_WEBHOOK_TOKEN=${SMS_WEBHOOK_TOKEN:-}
     volumes:
       # Persist vector database, uploaded reviews, and chat history
       - ./data:/app/data

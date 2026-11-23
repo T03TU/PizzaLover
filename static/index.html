@@ -20,23 +20,19 @@
 <i>
 </i> Local models. Local knowledge.</div>
 <div class="profile-control">
-<label for="profile">Local profile</label>
-<select id="profile" aria-describedby="profile-help" disabled><option>Loading…</option></select>
-<button id="add-profile" class="subtle" disabled>＋ Profile</button>
+<label for="active-role">Active role</label><select id="active-role" disabled aria-label="Active role"><option>Loading…</option></select>
 </div>
+<button id="settings" class="subtle" disabled>Settings</button>
 <button id="new-chat" class="subtle">＋ New chat</button>
 </header>
-<nav class="pane-controls" aria-label="Show or hide workspace panes">
-<span class="section-label">PANES</span>
-<button type="button" data-pane="sidebar" aria-controls="sidebar" aria-expanded="true">Hide controls & history</button>
-<button type="button" data-pane="chat-pane" aria-controls="chat-pane" aria-expanded="true">Hide chat</button>
-<button type="button" data-pane="evidence-pane" aria-controls="evidence-pane" aria-expanded="true">Hide evidence & tests</button>
-</nav>
 <main class="workspace" id="workspace">
+<div class="pane-shell" id="sidebar-shell">
+<button type="button" class="pane-toggle" data-pane="sidebar" aria-controls="sidebar" aria-expanded="true" aria-label="Collapse controls and history" data-direction="left"></button><span class="collapsed-name" aria-hidden="true">Controls</span>
 <aside class="sidebar" id="sidebar" aria-label="Controls and chat history">
+<div class="signed-in-control"><span class="small muted">Signed in as</span><strong id="signed-in-alias">Loading…</strong></div>
 <details class="chat-history" open>
 <summary>Chat history</summary>
-<p id="profile-help" class="small muted">Named profiles in this app. Anyone using this app can switch profiles; these are not private accounts.</p>
+<p id="profile-help" class="small muted">Your conversations are saved to your signed-in account.</p>
 <div id="chat-list" aria-label="Saved conversations"></div>
 <p id="history-status" class="small muted" role="status">Loading saved chats…</p>
 </details>
@@ -64,7 +60,7 @@
 </form>
 <div class="divider">
 </div>
-<div class="toggle-row">
+<div class="toggle-row" data-permission="scorecards:view">
 <div>
 <h3>Ragas auto-evaluation</h3>
 <p class="muted small">A quality check after every answer</p>
@@ -75,8 +71,8 @@
 </span>
 </label>
 </div>
-<p class="small muted">Scored on your machine. Evaluation may take a little longer.</p>
-<section class="quality">
+<p data-permission="scorecards:view" class="small muted">Scored on your machine. Evaluation may take a little longer.</p>
+<section class="quality" data-permission="scorecards:view">
 <div class="section-label">SESSION QUALITY <span id="session-count">0 turns</span>
 </div>
 <div id="session-summary" class="small muted">Your evaluated answers will build a picture here.</div>
@@ -84,7 +80,7 @@
 <p id="save-status" class="small" role="status">
 </p>
 </section>
-<details class="ingestion">
+<details class="ingestion" data-permission="pipeline:manage">
 <summary>Add customer reviews</summary>
 <p class="small muted">Upload a CSV or Excel (.xlsx) file with Feedback_ID, Franchise, Location, Rating, and Comment. Up to 500 reviews, under 2 MiB. Excel uses the first worksheet.</p>
 <input type="file" id="csv-file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" aria-label="Customer review CSV or Excel file">
@@ -92,7 +88,7 @@
 <p id="upload-status" class="small" role="status">
 </p>
 </details>
-<details class="ingestion">
+<details class="ingestion" data-permission="pipeline:manage">
 <summary>Import Google reviews</summary>
 <form id="google-ingest-form">
 <label for="google-country">Country code</label>
@@ -113,6 +109,8 @@
 <p>Ollama · Chroma · Ragas</p>
 </div>
 </aside>
+</div>
+<div class="pane-shell" id="chat-pane-shell">
 <section class="chat-pane" id="chat-pane" aria-label="Pizza review chat">
 <div class="chat-heading">
 <span>THE REVIEW TABLE</span>
@@ -152,6 +150,9 @@
 <div class="composer-note">Evidence from the top 3 matching reviews · Each question is independent</div>
 </div>
 </section>
+</div>
+<div class="pane-shell" id="evidence-pane-shell">
+<button type="button" class="pane-toggle" data-pane="evidence-pane" aria-controls="evidence-pane" aria-expanded="true" aria-label="Collapse evidence and tests" data-direction="right"></button><span class="collapsed-name" aria-hidden="true">Evidence</span>
 <aside class="evidence-pane" id="evidence-pane" aria-label="Evidence and evaluation">
 <div class="evidence-heading">
 <div>
@@ -167,7 +168,7 @@
 </div>
 <div id="reviews">
 </div>
-<section class="scorecard">
+<section class="scorecard" data-permission="scorecards:view">
 <div class="section-label">TURN QUALITY <span class="tag">RAGAS</span>
 </div>
 <h3>A little transparency.</h3>
@@ -176,25 +177,138 @@
 </div>
 <p class="small muted score-note">Scores reflect the selected answer. A score is a signal, not a guarantee.</p>
 </section>
-<details id="golden">
+<details id="golden" data-permission="scorecards:view">
 <summary>Latest golden benchmark</summary>
 <div id="golden-summary" class="small muted">No saved benchmark available.</div>
 </details>
 </aside>
-<p id="panes-empty" class="muted" hidden>All panes are hidden. Use the controls above to show a pane.</p>
+</div>
 </main>
 <div id="connection-error" class="connection-error" role="alert" hidden>
 </div>
 <dialog id="profile-dialog" aria-labelledby="profile-title">
 <form id="profile-form">
-<h2 id="profile-title">Create a local profile</h2>
-<p class="small muted">Chat history is saved separately for each profile on this server. Profiles are not password-protected.</p>
-<label for="profile-name">Profile name</label>
-<input id="profile-name" required maxlength="80" autocomplete="nickname">
+<h2 id="profile-title">Create user</h2>
+<p class="small muted">Share these credentials with the new user securely.</p>
+<label for="profile-username">Username</label><input id="profile-username" required maxlength="80" pattern="[A-Za-z0-9]+" autocomplete="off">
+<p class="small muted">Letters and numbers only. This is separate from email and phone.</p>
+<label for="profile-name">Display name</label>
+<input id="profile-name" required maxlength="80" autocomplete="off">
+<label for="profile-password">Password (at least 12 characters)</label>
+<input id="profile-password" type="password" minlength="12" maxlength="256" required autocomplete="new-password">
+<label for="profile-email">Recovery email (optional)</label><input id="profile-email" type="email" maxlength="254" autocomplete="off">
+<div id="profile-country-fields"></div>
+<label for="profile-phone">Recovery phone (optional)</label><input id="profile-phone" type="tel" maxlength="80" autocomplete="off">
+<fieldset id="profile-roles"><legend>Roles</legend></fieldset>
 <p id="profile-error" role="alert"></p>
 <div class="mapping-actions"><button type="button" id="profile-cancel" class="secondary">Cancel</button>
-<button type="submit" id="profile-create" class="secondary">Create profile</button></div>
+<button type="submit" id="profile-create" class="secondary">Create user</button></div>
 </form>
+</dialog>
+<dialog id="auth-dialog" aria-labelledby="auth-title">
+<form id="auth-form">
+<h2 id="auth-title">Sign in</h2>
+<p id="auth-help" class="small muted">Use your account name and password.</p>
+<div id="setup-fields" hidden><label for="setup-token">Setup token from the server console</label><input id="setup-token" autocomplete="off"></div>
+<div id="auth-method-fields"><label for="auth-method">Sign in using</label><select id="auth-method"><option value="account">Username or email</option><option value="phone">Phone number</option></select></div>
+<div id="auth-country-fields" hidden></div>
+<label id="auth-name-label" for="auth-name">Username or email</label><input id="auth-name" maxlength="254" required autocomplete="username">
+<label for="auth-password">Password</label><input id="auth-password" type="password" maxlength="256" required autocomplete="current-password">
+<p id="auth-notice" role="status"></p><p id="auth-error" role="alert"></p><button class="secondary" type="submit">Continue</button><button id="forgot-password" type="button" class="text-button">Forgot Password?</button>
+</form>
+</dialog>
+<dialog id="recovery-dialog" aria-labelledby="recovery-title">
+<h2 id="recovery-title">Reset password</h2>
+<p id="recovery-dev" class="small muted" role="status" hidden>Development mode: verification codes are printed in the backend console.</p>
+<form id="recovery-request-form">
+<label for="recovery-channel">Recover using</label><select id="recovery-channel"><option value="email">Email address</option><option value="phone">Phone number</option></select>
+<div id="recovery-country-fields" hidden></div>
+<label id="recovery-identifier-label" for="recovery-identifier">Email address</label><input id="recovery-identifier" type="email" maxlength="254" autocomplete="email" required>
+<button class="secondary" type="submit">Send verification code</button>
+</form>
+<form id="recovery-verify-form" hidden>
+<p id="recovery-confirmation" role="status"></p>
+<label for="recovery-code">Verification code</label><input id="recovery-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+<p class="small muted">The code expires in 10 minutes. Requesting a new code invalidates the previous one.</p>
+<button class="secondary" type="submit">Verify code</button><button id="recovery-resend" type="button" class="text-button">Request a new code</button>
+</form>
+<form id="recovery-password-form" hidden>
+<label for="recovery-password">New password (at least 12 characters)</label><input id="recovery-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required>
+<label for="recovery-confirm-password">Confirm new password</label><input id="recovery-confirm-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required>
+<button class="secondary" type="submit">Set new password</button>
+</form>
+<p id="recovery-error" role="alert"></p><button id="recovery-cancel" class="secondary" type="button">Back to sign in</button>
+</dialog>
+<dialog id="settings-dialog" aria-labelledby="settings-title" aria-describedby="settings-description">
+<div class="settings-header">
+<div><h2 id="settings-title">Settings</h2><p id="settings-description">Manage your workspace and access.</p></div>
+<button class="settings-close" type="button" data-close="settings-dialog" aria-label="Close settings"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+</div>
+<div id="account-summary" class="settings-account">
+<span id="settings-avatar" class="settings-avatar" aria-hidden="true"></span>
+<div class="settings-account-copy"><span class="settings-account-label">Signed in as</span><strong id="settings-username"></strong></div>
+<span id="settings-active-role" class="settings-role"></span>
+</div>
+<div class="settings-content">
+<section class="settings-group" data-settings-group aria-labelledby="settings-workspace-title">
+<h3 id="settings-workspace-title">Workspace</h3>
+<button id="open-pipeline" data-permission="pipeline:manage" class="settings-item" type="button">
+<span class="settings-item-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v5H4zM4 14h16v5H4zM8 7.5h.01M8 16.5h.01M16 10v4M8 10v4"/></svg></span>
+<span class="settings-item-copy"><strong>Data Pipeline Management</strong><span>Prepare reviews and manage the knowledge bank.</span></span><span class="settings-chevron" aria-hidden="true">›</span>
+</button>
+</section>
+<section class="settings-group" data-settings-group aria-labelledby="settings-access-title">
+<h3 id="settings-access-title">People &amp; permissions</h3>
+<button id="open-users" data-permission="users:create" class="settings-item" type="button">
+<span class="settings-item-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M17 14a5 5 0 0 1 4 5v1"/></svg></span>
+<span class="settings-item-copy"><strong>Manage users</strong><span>Add people and manage account access.</span></span><span class="settings-chevron" aria-hidden="true">›</span>
+</button>
+<button id="open-roles" data-permission="roles:manage" class="settings-item" type="button">
+<span class="settings-item-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 4v5c0 5-8 9-8 9s-8-4-8-9V7zM8.5 12l2.5 2.5 4.5-5"/></svg></span>
+<span class="settings-item-copy"><strong>Roles and permissions</strong><span>Define roles and choose what each can do.</span></span><span class="settings-chevron" aria-hidden="true">›</span>
+</button>
+</section>
+</div>
+<div class="settings-footer"><span>Current session</span><button id="sign-out" class="settings-signout" type="button" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H5v16h5M14 8l4 4-4 4M9 12h10"/></svg>Sign out</button></div>
+</dialog>
+<dialog id="pipeline-dialog" aria-labelledby="pipeline-title">
+<h2 id="pipeline-title">Data Pipeline Management</h2>
+<p>Stage reviews, clean them with SQL, then generate embeddings. Available table: <code>staging_reviews</code> (Feedback_ID, Franchise, Location, Rating, Comment).</p>
+<label for="stage-file">Stage CSV or Excel file</label><input id="stage-file" type="file" accept=".csv,.xlsx">
+<button id="stage-upload" class="secondary">Upload to staging</button>
+<form id="sql-form"><label for="pipeline-sql">SQL query</label>
+<textarea id="pipeline-sql" rows="6" required maxlength="20000" spellcheck="false">SELECT * FROM staging_reviews LIMIT 100;</textarea>
+<p class="small muted">SELECT, INSERT, UPDATE and DELETE are allowed only on staging_reviews. Example: UPDATE staging_reviews SET Franchise = trim(Franchise);</p>
+<button id="run-sql" class="secondary" type="submit">Run SQL</button></form>
+<p id="pipeline-status" role="status"></p><div id="pipeline-results" class="table-scroll" tabindex="0" aria-label="SQL results"></div>
+<button id="reset-knowledge" class="secondary" hidden>Reset knowledge bank</button>
+<p id="reset-status" role="status"></p>
+<div class="mapping-actions"><button id="embed-staged" class="secondary">Generate embeddings</button><button class="secondary" data-close="pipeline-dialog">Close</button></div>
+</dialog>
+<dialog id="reset-knowledge-dialog" aria-labelledby="reset-knowledge-title">
+<form id="reset-knowledge-form">
+<h2 id="reset-knowledge-title">Reset knowledge bank</h2>
+<p>Are you sure? All embedded reviews will be permanently removed from the chatbot.</p>
+<p class="small muted">Saved chats and staging data remain. Old chat responses are historical records.</p>
+<label for="reset-confirmation">Confirm by typing CONFIRM</label>
+<input id="reset-confirmation" autocomplete="off" spellcheck="false" required>
+<p id="reset-dialog-status" role="status"></p>
+<div class="mapping-actions"><button id="reset-cancel" type="button" class="secondary">Cancel</button><button id="reset-confirm" type="submit" class="secondary" disabled>Reset knowledge bank</button></div>
+</form>
+</dialog>
+<dialog id="roles-dialog" aria-labelledby="roles-title">
+<h2 id="roles-title">Roles and permissions</h2>
+<label for="role-select">Existing role</label><select id="role-select"></select>
+<form id="role-form"><label for="role-name">Role name</label><input id="role-name" required maxlength="50" placeholder="e.g. Review analyst">
+<p class="small muted">Use letters, numbers, spaces, underscores or hyphens.</p><div id="permission-fields"></div>
+<div class="mapping-actions"><button id="role-save" class="secondary" type="submit">Save role</button><button id="role-delete" class="secondary" type="button">Delete role</button></div></form>
+<p id="role-status" role="status"></p><button class="secondary" data-close="roles-dialog">Close</button>
+</dialog>
+<dialog id="users-dialog" aria-labelledby="users-title">
+<h2 id="users-title">Manage users</h2><p class="small muted">Username, role, password and active status changes require roles:manage. Users receive the combined permissions of their selected roles. Set passwords for migrated accounts here. Uncheck Active account to block sign-in immediately, or assign a role with fewer permissions. Removing an account also deletes its saved chats.</p>
+<button id="add-profile" class="subtle" disabled>＋ User</button>
+<div id="users-list"></div><p id="users-status" role="status"></p>
+<button class="secondary" data-close="users-dialog">Close</button>
 </dialog>
 <dialog id="column-dialog" aria-labelledby="column-title">
 <form id="column-form">

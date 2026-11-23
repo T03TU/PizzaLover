@@ -37,7 +37,11 @@ ollama pull mxbai-embed-large
 uvicorn api.server:app --host 127.0.0.1 --port 8000
 ```
 
-Open **http://127.0.0.1:8000**. Keep one Uvicorn worker: resources, the model
+Open **http://127.0.0.1:8000**. On first start, copy the **account setup token**
+from the server console into the setup dialog and set an administrator password
+(at least 12 characters). The token is single use and changes on restart until
+setup is completed. Subsequent visits require an account name and password.
+Keep one Uvicorn worker: resources, the model
 lock, and evaluation history belong to that server session. API documentation
 is available at `/docs`. Existing CLI commands remain available:
 
@@ -101,8 +105,9 @@ Each question retrieves up to three matching reviews. Answers stream first;
 optional Ragas scoring follows. Click an inline feedback ID to highlight its
 source, or click an earlier answer to restore that turn's evidence and scores.
 Each question is independent; prior chat messages are not sent as model context.
-New chat clears the displayed conversation, while server evaluation history
-remains until the server restarts. Chat messages are not stored in browser storage.
+New chat clears the displayed conversation. Conversations, evidence, filters and
+turn metrics persist in SQLite for the signed-in account; session evaluation
+aggregates remain until restart. Chat messages are not stored in browser storage.
 
 Use **Add customer reviews** to upload UTF-8 CSV or Excel `.xlsx` files (up to 500 rows, under
 2 MiB including multipart overhead). The required columns are `Feedback_ID`,
@@ -112,7 +117,11 @@ are rejected. The whole upload is validated before embedding/indexing. JSON
 reviews can also be posted directly:
 
 ```bash
-curl http://127.0.0.1:8000/api/ingest \
+# Sign in as an account with pipeline:manage, keeping its session cookie.
+curl -c /tmp/pizzalover-cookies http://127.0.0.1:8000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Admin","password":"YOUR_PASSWORD"}'
+curl -b /tmp/pizzalover-cookies http://127.0.0.1:8000/api/ingest \
   -H 'Content-Type: application/json' \
   -d '{"Feedback_ID":"FB-051","Franchise":"Sals","Location":"Downtown","Rating":5,"Comment":"Great pepperoni."}'
 ```
@@ -145,7 +154,207 @@ and at most two retries, to reduce contention on local hardware. Missing/failed 
 scores display as unavailable. The UI can stop reading a response; an already
 running synchronous judge finishes before another model workload starts.
 The app is intended for a trusted local machine and binds to loopback in the
-command above; it does not add authentication or external hosting.
+command above; it uses password authentication and local sessions, and does not add external hosting.
+
+### Permissions, accounts and migration
+
+The six supported permissions are `chat:use`, `scorecards:view`,
+`feedback:submit`, `users:create`, `pipeline:manage`, and `roles:manage`.
+`USER` starts with the first three; `ADMIN` starts with all six. **Settings** is
+available to every signed-in account. Its pipeline, role and user management
+options are visible only with the corresponding permission. The API checks
+permissions independently and returns 403 for authenticated, unauthorized
+requests (401 for missing/expired credentials). Chat-only roles cannot obtain
+scores from SSE, saved chats, or evaluation endpoints.
+
+Use **Settings → Manage users → ＋ User** to create password-protected accounts.
+Enter a separate username (1–80 ASCII letters and numbers, case-insensitively
+unique), display name, optional email and phone, and select one or more roles.
+For example, `Analyst42` is a username; the display name can contain spaces.
+Administrators can edit usernames and check/uncheck multiple roles in Manage
+users. The top of the left panel shows **Signed in as** with the username. The header
+contains an **Active role** selector for the assigned roles. **Sign out** is in
+Settings, in a separate session footer. Settings groups the data pipeline under
+Workspace and places user management before role configuration under People &
+permissions. Its account card shows the signed-in username and active role;
+groups without permitted options are hidden. Small, thin chevron controls collapse and expand the left and right
+panels. The chat is always visible. Side-panel handles remain available when
+collapsed, and the selection survives reloads; old chat-collapse preferences are
+ignored. A session uses only its selected role's
+permissions. Switching roles immediately updates controls and API access without
+signing out. The selection survives reloads and is independent for separate
+sign-in sessions. If an active role is unassigned, the session falls back to an
+assigned role. Accounts with no permissions in their current role can still
+switch to another assigned role. `users:create` permits
+creating default USER accounts; assigning other roles also requires
+`roles:manage`. **Settings → Roles and permissions** creates custom named roles
+and toggles their permissions. **Manage users** lists accounts; updating roles,
+passwords or active status requires both `users:create` and `roles:manage`.
+ADMIN can remove strictly lower-privilege accounts in **Manage users**. Removal
+revokes sessions and deletes the account's saved chats; submitted feedback logs
+are retained. Self-removal, other ADMIN accounts, and roles with equal or greater
+permissions are protected. Uncheck **Active account** to immediately restrict
+sign-in without deleting history, or assign a role with fewer permissions.
+Default roles cannot be deleted. An assigned custom role must be reassigned
+before deletion. The last active account with ADMIN membership cannot lose that membership, be
+deactivated, or lose its effective `roles:manage` permission. These operations use serialized
+SQLite transactions. Role changes affect existing sessions on their next request;
+password resets and deactivation revoke sessions.
+
+Existing profiles keep their IDs, names and saved chats. On the first migration,
+the oldest profile becomes ADMIN and the remaining profiles become USER. The
+one-time setup sets the password on that existing ADMIN (the setup name field is
+ignored). That administrator then sets passwords for the other migrated accounts
+in **Manage users**. Passwordless profile switching and automatic guest accounts
+are replaced by sign-in. No profile or conversation data is deleted. Back up
+`data/chat_history.sqlite3` before upgrading. Passwords use salted scrypt hashes;
+sessions use opaque random cookies with HttpOnly/SameSite=Strict and server-side
+expiry. HTTPS sets Secure cookies. Run behind HTTPS if exposing the service
+beyond the trusted local machine.
+
+The migration carries each existing primary role into a `profile_roles`
+membership table and preserves account IDs, passwords, contacts, sessions and
+conversations. Existing names receive a unique alphanumeric username by removing
+non-alphanumeric characters and adding a numeric suffix for collisions (or using
+`User` if no ASCII letters/numbers remain). The ADMIN username remains ADMIN.
+Admins can see and edit migrated usernames in Manage users.
+
+User API examples:
+
+```json
+{"name":"Jamie Smith","username":"Jamie42","password":"a-long-password-123","roles":["USER","REVIEWER"]}
+```
+
+`PATCH /api/users/{id}` accepts `username` and a `roles` array, which replaces the
+complete assignment. At least one existing role is required; unknown or duplicate
+roles are rejected atomically. Creating non-default role assignments and updating
+accounts require `roles:manage` as well as `users:create`. The legacy singular
+`role` input still replaces assignments with one role; do not send both fields.
+User-management responses include `username`, assigned `roles`, their combined
+`permissions` for administration, and the legacy primary `role`. Session responses
+(`/api/profiles` and login) include `active_role` and permissions for that role
+only; their `role` field reflects the active role. Authorization checks the
+server-side session selection. `POST /api/auth/role` with `{"role":"USER"}`
+switches to an assigned role. The endpoint requires sign-in, even when the current
+role has no permissions. Admin-only actions require ADMIN to be selected.
+The UI sends `X-Active-Role` on protected requests; stale tabs receive 409 and must
+reload. Role switching closes open settings dialogs and reloads conversation data
+under the newly selected role so unavailable scores and controls are removed.
+Feedback records retain a snapshot of all assigned roles in addition to the
+legacy role field. Email and phone recovery continue to use normalized contacts.
+
+### Sign-in and password recovery
+
+Sign in with a username, email, or phone number. Display names are separate
+from sign-in usernames. Username sign-in ignores letter casing. For local phone numbers,
+select the country using the searchable country/calling-code dropdown. Numbers
+are validated and stored in E.164 format; email addresses are trimmed and
+case-normalized. Recovery email and phone can be set while creating a user or
+in **Settings → Manage users**. Each contact can belong to only one account.
+
+**Forgot Password?** on the sign-in dialog has three steps: select email/phone,
+enter the received six-digit code, and enter/confirm a new password of at least
+12 characters. Codes expire after 10 minutes, allow five verification attempts,
+and can be used once. Requesting another code invalidates previous codes and
+verified reset grants across both contact methods. Completing a reset invalidates
+all sessions. Changing recovery contacts or resetting a password administratively
+also invalidates pending recovery codes. Recovery never reactivates disabled
+accounts. Request responses use the same generic message for known and unknown
+accounts. SQLite-backed limits allow five requests per contact and fifteen per
+IP per 10 minutes, thirty verification/sign-in attempts per IP, and fifteen reset
+completion attempts per IP. Rate-limit responses use HTTP 429 and Retry-After.
+
+With no provider configured, the sign-in recovery dialog shows a development
+banner and the backend console prints `PASSWORD RESET` with the destination
+and code. Codes are never returned by an API. For email delivery, configure
+`SMTP_HOST`, `SMTP_FROM`, optional `SMTP_USERNAME`/`SMTP_PASSWORD`, `SMTP_PORT`
+(default 587), and `SMTP_TLS` (`starttls`, `ssl` or `plain`). For SMS, configure
+`SMS_WEBHOOK_URL`, which receives a POST with `to` (E.164) and `message`; optional
+`SMS_WEBHOOK_TOKEN` is sent as a Bearer token. These settings are forwarded by
+Docker Compose; for native Uvicorn, export them in the server environment.
+Provider errors are logged while the public response remains generic.
+
+To explicitly clear accounts, chats, feedback, sessions and reset tokens and seed
+one clean ADMIN (leaving embedded and staged reviews intact):
+
+```bash
+venv/bin/python scripts/reset_users.py --confirm RESET-USERS
+# Set real recovery contacts when appropriate:
+# ... --email admin@example.com --phone '+64211234567' --country NZ
+```
+
+The script prints a newly generated password once and verifies name/email/phone
+sign-in. Default recovery contacts `admin@example.com` and `+12025550123` are demo
+values for console-mode testing; replace them before configuring external delivery.
+This destructive reset never runs automatically at startup.
+
+### Pre-embedding data pipeline
+
+Open **Settings → Data Pipeline Management** with `pipeline:manage`. Upload a CSV
+or XLSX file into staging (column mapping is supported), inspect the table, and
+run SQL to correct values before generating embeddings. The existing direct
+upload and Google import also require `pipeline:manage`.
+
+```sql
+SELECT * FROM staging_reviews LIMIT 100;
+UPDATE staging_reviews SET Franchise = trim(Franchise);
+UPDATE staging_reviews SET Location = 'Auckland CBD' WHERE Location = 'Auck CBD';
+```
+
+The separate `data/staging.sqlite3` database contains only `staging_reviews`, with
+the five review columns. SELECT, INSERT, UPDATE and DELETE are allowed. SQLite's
+statement authorizer rejects access to other tables, schema changes, PRAGMA,
+ATTACH, extension loading and unapproved functions; multiple statements are
+rejected. SQL has length/execution limits and previews return at most 500 rows.
+Query errors roll back changes. **Generate embeddings** validates all staged
+reviews and checks indexed IDs before using the configured embedding model.
+Successful embedding clears staging and refreshes filters. Staging edits and
+embedding are serialized so the embedded data matches the edited snapshot.
+Invalid data or model errors retain staging for correction. A model/storage
+failure can partially write the vector index; if a retry reports indexed IDs,
+remove those rows from staging before retrying. Embedding batches are limited
+to 500 rows.
+
+ADMIN accounts with `pipeline:manage` can use **Settings → Data Pipeline Management → Reset knowledge bank**
+to open an in-app confirmation dialog. Type `CONFIRM` and click **Reset knowledge
+bank** to permanently remove all embedded reviews. The
+reset shares the model lock with chat and ingestion, keeps the existing Chroma
+collection usable, and refreshes filters. The displayed conversation and evidence
+are cleared; saved historical chats remain available. New requests against an
+empty index return an explicit empty-knowledge-bank response without model or
+embedding calls. Staging data, source files, feedback
+logs and saved chats remain; an intentionally empty index stays empty on restart.
+A failed storage deletion may be partial; the error prompts a retry.
+
+### Response feedback
+
+Accounts with `feedback:submit` see thumbs up/down beneath completed responses,
+including restored chats. Selecting a rating reveals an optional comment and
+Submit and Cancel buttons. Cancel discards the draft and restores any previously
+saved rating and comment. Failed/interrupted turns cannot receive feedback. Feedback is
+saved in `response_feedback` in `data/chat_history.sqlite3`, with rating, comment,
+message ID (the saved turn ID), user ID, role at submission, and a UTC timestamp.
+A user can update their rating/comment; one record per response/user is retained.
+Feedback survives restarts and chat deletion for logging. The API verifies
+response ownership and completion and derives identity/role/time on the server.
+
+Additional API endpoints (all except auth status/setup/login require sign-in):
+
+| Endpoint | Permission / behavior |
+| --- | --- |
+| `GET /api/auth/status`, `POST /api/auth/setup` | One-time console-token setup |
+| `POST /api/auth/login`, `POST /api/auth/logout` | Start/end a browser session |
+| `GET /api/profiles` | Current account and permissions |
+| `GET/POST /api/users` | `users:create`; list/create accounts |
+| `DELETE /api/users/{id}` | ADMIN + `users:create`; remove strictly lower-privilege accounts |
+| `PATCH /api/users/{id}` | `users:create` + `roles:manage`; username/roles/active/password updates |
+| `GET/POST /api/roles`, `PUT/DELETE /api/roles/{name}` | `roles:manage` |
+| `GET /api/pipeline` | `pipeline:manage`; staging preview |
+| `POST /api/pipeline/stage` | `pipeline:manage`; validated JSON/CSV/XLSX staging |
+| `POST /api/pipeline/query` | `pipeline:manage`; `{"sql":"SELECT ..."}` |
+| `POST /api/pipeline/reset` | ADMIN + `pipeline:manage`; `{ "confirmation": "CONFIRM" }` |
+| `POST /api/pipeline/embed` | `pipeline:manage`; embed and clear staging |
+| `POST /api/feedback` | `feedback:submit`; `{"message_id":"UUID","rating":"thumbs_up","comment":"optional"}` |
 
 ### Verification
 
@@ -157,7 +366,9 @@ node tests/test_sse_parser.cjs
 
 Tests inject an in-memory engine and exercise real FastAPI routes/lifespan,
 SSE ordering, filters, disabled evaluation, invalid input, CSV/JSON ingestion,
-duplicate handling, history saves, golden summaries, and legacy chain inputs.
+duplicate handling, saved conversations, role migration, permission denials, admin
+lockout, SQL isolation, staging/embedding, feedback ownership, golden summaries,
+and legacy chain inputs.
 They do not require Ollama or modify the real review index.
 
 ### Google pizza review ingestion

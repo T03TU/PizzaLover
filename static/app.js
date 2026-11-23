@@ -8,7 +8,7 @@ let selected = null;
 let currentProfile = null;
 let activeChatId = null;
 let historyBusy = true;
-const paneLabels = {sidebar:'controls & history','chat-pane':'chat','evidence-pane':'evidence & tests'};
+const paneLabels = {sidebar:'controls & history','evidence-pane':'evidence & tests'};
 
 function readPreference(key) {
   try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -17,25 +17,53 @@ function savePreference(key, value) {
   try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch (_) { /* Storage may be disabled. */ }
 }
 function setPaneVisible(id, visible) {
+  if (id === 'chat-pane') { $('chat-pane').hidden = false; return; }
   $(id).hidden = !visible;
   const button = document.querySelector(`[data-pane="${id}"]`);
   button.setAttribute('aria-expanded', String(visible));
-  button.textContent = `${visible ? 'Hide' : 'Show'} ${paneLabels[id]}`;
-  const key = {sidebar:'sidebarHidden','chat-pane':'chatHidden','evidence-pane':'evidenceHidden'}[id];
+  const collapseLeft = id === 'sidebar';
+  button.dataset.direction = (visible === collapseLeft) ? 'left' : 'right';
+  button.setAttribute('aria-label', `${visible ? 'Collapse' : 'Expand'} ${paneLabels[id]}`);
+  button.title = button.getAttribute('aria-label');
+  $(`${id}-shell`).dataset.collapsed = String(!visible);
+  const key = {sidebar:'sidebarHidden','evidence-pane':'evidenceHidden'}[id];
   $('workspace').dataset[key] = String(!visible);
-  $('panes-empty').hidden = Object.keys(paneLabels).some(pane => !$(pane).hidden);
   savePreference(`pizzalover.pane.${id}`, visible ? 'open' : 'closed');
 }
+// Retire the old chat-pane preference: chat is always visible.
+savePreference('pizzalover.pane.chat-pane', null);
 document.querySelectorAll('[data-pane]').forEach(button => {
   const id = button.dataset.pane;
   setPaneVisible(id, readPreference(`pizzalover.pane.${id}`) !== 'closed');
   button.addEventListener('click', () => setPaneVisible(id, $(id).hidden));
 });
 
+function can(permission) { return !!currentProfile?.permissions.includes(permission); }
+function applyPermissions() {
+  document.querySelectorAll('[data-permission]').forEach(el => { el.hidden = !can(el.dataset.permission); });
+  $('add-profile').hidden = !can('users:create');
+  $('reset-knowledge').hidden = currentProfile?.active_role !== 'ADMIN' || !can('pipeline:manage');
+  $('settings-username').textContent = currentProfile?.username || '';
+  $('settings-active-role').textContent = currentProfile?.active_role || '';
+  $('settings-active-role').title = currentProfile ? `Active role: ${currentProfile.active_role}` : '';
+  $('settings-avatar').textContent = currentProfile?.username.slice(0, 2).toUpperCase() || '';
+  document.querySelectorAll('[data-settings-group]').forEach(group => {
+    group.hidden = ![...group.querySelectorAll('[data-permission]')].some(option => !option.hidden);
+  });
+  $('question').disabled = !can('chat:use');
+  $('eval').disabled = !can('scorecards:view');
+  if (!can('scorecards:view')) { $('eval').checked = false; renderScores(null); }
+  turns.forEach(renderFeedback);
+  updateNavigation();
+}
 function updateNavigation() {
   const busy = historyBusy || !!activeController;
-  for (const id of ['profile', 'add-profile', 'new-chat', 'send']) $(id).disabled = busy;
-  document.querySelectorAll('.history-open, .history-delete').forEach(button => { button.disabled = busy; });
+  $('active-role').disabled = busy || !currentProfile || currentProfile.roles.length < 2;
+  $('add-profile').disabled = busy || !can('users:create');
+  for (const id of ['new-chat', 'send']) $(id).disabled = busy || !can('chat:use');
+  $('settings').disabled = !currentProfile;
+  $('sign-out').disabled = busy || !currentProfile;
+  document.querySelectorAll('.chips button, .history-open, .history-delete').forEach(button => { button.disabled = busy || !can('chat:use'); });
 }
 function rememberChat() {
   savePreference(`pizzalover.chat.${currentProfile.id}`, activeChatId);
@@ -47,6 +75,7 @@ function clearConversation() {
   renderScores(null);
 }
 async function refreshHistory() {
+  if (!can('chat:use')) { $('history-status').textContent = 'Chat access is not enabled for your role.'; return []; }
   const profileId = currentProfile.id;
   const {chats} = await (await api('/api/chats')).json();
   if (currentProfile.id !== profileId) return [];
@@ -77,8 +106,8 @@ async function loadChat(id, reveal = true) {
   for (const saved of chat.turns) {
     const turn = createTurn(saved.question);
     Object.assign(turn, {text:saved.text || saved.error || 'No answer was returned.', citations:saved.citations,
-      metrics:saved.metrics, error:saved.error, complete:true});
-    renderAnswer(turn); renderTurnFooter(turn); selectTurn(turn);
+      metrics:saved.metrics, error:saved.error, complete:true, id:saved.id, status:saved.status, feedback:saved.feedback});
+    renderAnswer(turn); renderTurnFooter(turn); renderFeedback(turn); selectTurn(turn);
   }
   $('chat-status').textContent = 'Saved chat restored. Each question still uses independent review evidence.';
   if (reveal) setPaneVisible('chat-pane', true);
@@ -87,16 +116,17 @@ async function loadChat(id, reveal = true) {
 async function loadProfiles() {
   const data = await (await api('/api/profiles')).json();
   currentProfile = data.current;
-  $('profile').replaceChildren();
-  data.profiles.forEach(profile => $('profile').add(new Option(profile.name, profile.id)));
-  $('profile').value = currentProfile.id;
+  $('signed-in-alias').textContent = currentProfile.username;
+  $('active-role').replaceChildren(...currentProfile.roles.map(role => new Option(role, role)));
+  $('active-role').value = currentProfile.active_role;
+  applyPermissions();
 }
 async function restoreProfileChat() {
   clearConversation();
   const chats = await refreshHistory();
   const previous = readPreference(`pizzalover.chat.${currentProfile.id}`);
   if (chats.some(chat => chat.id === previous)) await loadChat(previous, false);
-  else { rememberChat(); $('chat-status').textContent = `Ready for ${currentProfile.name}.`; }
+  else { rememberChat(); $('chat-status').textContent = `Ready for ${currentProfile.username}.`; }
 }
 async function navigateHistory(action) {
   if (activeController || historyBusy) return;
@@ -114,7 +144,10 @@ function node(tag, text, className) {
 }
 async function api(path, options = {}) {
   const headers = new Headers(options.headers);
-  if (currentProfile && (path.startsWith('/api/chats') || path === '/api/chat/stream')) headers.set('X-Profile-ID', currentProfile.id);
+  if (currentProfile && !path.startsWith('/api/auth/')) {
+    headers.set('X-Profile-ID', currentProfile.id);
+    if (path !== '/api/profiles' || options.method === 'POST') headers.set('X-Active-Role', currentProfile.active_role);
+  }
   const response = await fetch(path, {...options, headers});
   if (!response.ok) {
     let detail = `Request failed (${response.status})`;
@@ -198,6 +231,50 @@ function renderTurnFooter(turn) {
   const data = turn.metrics;
   turn.footer.textContent = turn.error || (data ? `${data.generation_time.toFixed(2)}s generation · ${data.evaluation_time.toFixed(2)}s evaluation` : '');
 }
+function renderFeedback(turn) {
+  if (!can('feedback:submit') || turn.status !== 'complete' || !turn.id) {
+    turn.feedbackElement?.remove(); turn.feedbackElement = null; return;
+  }
+  if (turn.feedbackElement) return;
+  const box = node('div', undefined, 'feedback-controls'); turn.feedbackElement = box;
+  box.addEventListener('click', event => event.stopPropagation());
+  const form = node('form'); form.hidden = true;
+  const comment = node('textarea'); comment.maxLength = 4000; comment.rows = 2;
+  comment.placeholder = 'Optional comment'; comment.setAttribute('aria-label', 'Optional response feedback comment');
+  comment.value = turn.feedback?.comment || '';
+  const submit = node('button', 'Submit', 'secondary'); submit.type = 'submit';
+  const status = node('p', turn.feedback ? 'Feedback saved. Select a rating to update it.' : ''); status.setAttribute('role', 'status');
+  let rating = turn.feedback?.rating;
+  const buttons = [];
+  for (const [value, label] of [['thumbs_up', '👍 Thumbs Up'], ['thumbs_down', '👎 Thumbs Down']]) {
+    const button = node('button', label, 'secondary'); button.type = 'button'; button.dataset.rating = value;
+    button.setAttribute('aria-pressed', String(rating === value));
+    button.addEventListener('click', () => {
+      rating = value; form.hidden = false;
+      buttons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rating === rating)));
+    }); buttons.push(button); box.append(button);
+  }
+  const cancel = node('button', 'Cancel', 'secondary'); cancel.type = 'button';
+  cancel.addEventListener('click', () => {
+    rating = turn.feedback?.rating;
+    comment.value = turn.feedback?.comment || '';
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.rating === rating)));
+    form.hidden = true;
+    status.textContent = turn.feedback ? 'Feedback saved. Select a rating to update it.' : '';
+  });
+  form.append(comment, submit, cancel);
+  form.addEventListener('submit', async event => {
+    event.preventDefault(); submit.disabled = true; cancel.disabled = true;
+    buttons.forEach(button => { button.disabled = true; });
+    try {
+      turn.feedback = await (await api('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message_id:turn.id, rating, comment:comment.value})})).json();
+      status.textContent = 'Feedback saved. Thank you.'; form.hidden = true;
+    } catch (error) { status.textContent = error.message; }
+    finally { submit.disabled = false; cancel.disabled = false; buttons.forEach(button => { button.disabled = false; }); }
+  });
+  box.append(form, status); turn.assistant.append(box);
+}
+
 /* Retain incomplete frames between reads; TextDecoder handles split UTF-8 bytes. */
 async function consumeSSE(response, onEvent) {
   const reader = response.body.getReader();
@@ -226,7 +303,7 @@ async function consumeSSE(response, onEvent) {
   } finally { reader.releaseLock(); }
 }
 async function sendQuestion(question) {
-  if (activeController || historyBusy || !currentProfile || !question.trim()) return;
+  if (activeController || historyBusy || !can('chat:use') || !question.trim()) return;
   $('connection-error').hidden = true;
   const turn = createTurn(question.trim());
   const controller = new AbortController(); activeController = controller;
@@ -237,7 +314,7 @@ async function sendQuestion(question) {
   try {
     const filters = {franchise:$('franchise').value || null,location:$('location').value || null,min_rating:Number($('rating').value) || null};
     const response = await api('/api/chat/stream', {method:'POST',headers:{'Content-Type':'application/json'},signal:controller.signal,body:JSON.stringify({question:question.trim(),filters,eval_enabled:$('eval').checked,chat_id:activeChatId})});
-    activeChatId = response.headers.get('X-Chat-ID'); rememberChat();
+    activeChatId = response.headers.get('X-Chat-ID'); turn.id = response.headers.get('X-Turn-ID'); rememberChat();
     await consumeSSE(response, (name, data) => {
       if (name === 'status') $('chat-status').textContent = data;
       if (name === 'citations') { turn.citations = data; selectTurn(turn); }
@@ -260,6 +337,8 @@ async function sendQuestion(question) {
     if (error.name !== 'AbortError') showError(turn.error);
   } finally {
     turn.complete = true;
+    turn.status = receivedDone && !turn.error ? 'complete' : 'interrupted';
+    renderFeedback(turn);
     if (!turn.text) { turn.text = turn.error || 'No answer was returned.'; renderAnswer(turn); }
     if (turn.error) turn.footer.textContent = turn.error;
     activeController = null; $('send').hidden = false; $('stop').hidden = true; updateNavigation();
@@ -279,6 +358,7 @@ function summaryRows(target, summary) {
   }
 }
 async function refreshSummary() {
+  if (!can('scorecards:view')) return;
   const data = await (await api('/api/evaluation/summary')).json();
   summaryRows($('session-summary'), data.session);
   const count = Math.max(0, ...Object.values(data.session).map(stat => stat.count));
@@ -286,6 +366,7 @@ async function refreshSummary() {
   if (Object.keys(data.golden).length) summaryRows($('golden-summary'), data.golden);
 }
 async function loadMetadata() {
+  if (!can('chat:use')) return;
   const data = await (await api('/api/metadata/options')).json();
   for (const [id, values] of [['franchise',data.franchises],['location',data.locations]]) {
     const el = $(id); const previous = el.value;
@@ -305,15 +386,16 @@ $('new-chat').addEventListener('click', () => {
   $('chat-status').textContent = 'New chat. Previous conversations are saved in chat history.'; $('question').focus();
   refreshHistory().catch(error => showError(error.message));
 });
-$('profile').addEventListener('change', () => navigateHistory(async () => {
+$('add-profile').addEventListener('click', async () => {
+  $('profile-form').reset(); $('profile-error').textContent = '';
+  renderRoleChoices($('profile-roles'), [{name:'USER'}], ['USER']);
   try {
-    await api(`/api/profiles/${$('profile').value}/select`, {method:'POST'});
-    clearConversation();
-    await loadProfiles(); await restoreProfileChat();
-  } finally { $('profile').value = currentProfile.id; }
-}));
-$('add-profile').addEventListener('click', () => {
-  $('profile-form').reset(); $('profile-error').textContent = ''; $('profile-dialog').showModal();
+    if (can('roles:manage')) {
+      const {roles} = await (await api('/api/roles')).json();
+      renderRoleChoices($('profile-roles'), roles, ['USER']);
+    }
+    $('profile-dialog').showModal();
+  } catch (error) { showError(error.message); }
 });
 $('profile-cancel').addEventListener('click', () => $('profile-dialog').close());
 $('profile-form').addEventListener('submit', async event => {
@@ -322,9 +404,9 @@ $('profile-form').addEventListener('submit', async event => {
   if (!name || historyBusy || activeController) return;
   historyBusy = true; updateNavigation(); $('profile-create').disabled = true;
   try {
-    await api('/api/profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
-    clearConversation();
-    await loadProfiles(); await restoreProfileChat(); $('profile-dialog').close();
+    await api('/api/profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, password:$('profile-password').value, username:$('profile-username').value, roles:selectedRoles($('profile-roles')), email:$('profile-email').value, phone:$('profile-phone').value, country:$('profile-country').value})});
+    $('profile-dialog').close();
+    if ($('users-dialog').open) await loadUsers();
   } catch (error) { $('profile-error').textContent = error.message; }
   finally { historyBusy = false; updateNavigation(); $('profile-create').disabled = false; }
 });
@@ -404,16 +486,67 @@ $('upload').addEventListener('click', async () => {
   finally { $('upload').disabled = false; }
 });
 renderScores(null);
-updateNavigation();
+applyPermissions();
+
+async function startAccount() {
+  await loadProfiles();
+  try {
+    await restoreProfileChat();
+    const results = await Promise.allSettled([loadMetadata(), refreshSummary()]);
+    results.forEach(result => { if (result.status === 'rejected') showError(result.reason.message); });
+  } catch (error) { showError(error.message); }
+  finally { historyBusy = false; updateNavigation(); }
+}
+let setupRequired = false;
 (async () => {
-  try { await loadProfiles(); await restoreProfileChat(); historyBusy = false; }
-  catch (error) { showError(`Could not load local profiles and history: ${error.message}. Reload to retry.`); }
-  finally { updateNavigation(); }
+  try {
+    const status = await (await api('/api/auth/status')).json();
+    setupRequired = status.setup_required;
+    await loadRecoveryOptions();
+    $('auth-method-fields').hidden = setupRequired;
+    $('forgot-password').hidden = setupRequired;
+    if (!setupRequired) {
+      const response = await fetch('/api/profiles');
+      if (response.ok) { await startAccount(); return; }
+    }
+    $('setup-fields').hidden = !setupRequired;
+    $('setup-token').required = setupRequired;
+    $('auth-password').minLength = setupRequired ? 12 : 1;
+    $('auth-title').textContent = setupRequired ? 'Set up administrator' : 'Sign in';
+    $('auth-help').textContent = setupRequired ? 'Use the setup token printed in the server console and choose a password of at least 12 characters. Existing installations keep the oldest profile as administrator.' : 'Use your username, email or phone number and password.';
+    $('auth-dialog').showModal();
+  } catch (error) { showError(error.message); }
 })();
-Promise.all([loadMetadata(), refreshSummary()]).catch(() => {
-  $('corpus-count').textContent = 'Review index unavailable';
-  showError('Cannot connect to the local engine. Start FastAPI and check Ollama is running.');
+$('auth-dialog').addEventListener('cancel', event => event.preventDefault());
+$('auth-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = event.submitter; button.disabled = true;
+  try {
+    const body = {name:$('auth-name').value.trim(), password:$('auth-password').value, country:$('auth-country').value, identifier_type:$('auth-method').value};
+    if (setupRequired) body.token = $('setup-token').value.trim();
+    await api(setupRequired ? '/api/auth/setup' : '/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+    $('auth-password').value = ''; $('setup-token').value = '';
+    $('auth-dialog').close(); await startAccount();
+  } catch (error) { $('auth-error').textContent = error.message; }
+  finally { button.disabled = false; }
 });
+$('active-role').addEventListener('change', () => navigateHistory(async () => {
+  const role = $('active-role').value;
+  try {
+    currentProfile = await (await api('/api/auth/role', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role})})).json();
+    // Close privileged dialogs and reload scoped conversation data under the new role.
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    $('connection-error').hidden = true;
+    await loadProfiles(); await restoreProfileChat();
+    await Promise.all([loadMetadata(), refreshSummary()]);
+  } finally { $('active-role').value = currentProfile.active_role; }
+}));
+$('sign-out').addEventListener('click', async () => {
+  try { await api('/api/auth/logout', {method:'POST'}); location.reload(); }
+  catch (error) { showError(error.message); }
+});
+$('settings').addEventListener('click', () => $('settings-dialog').showModal());
+document.querySelectorAll('[data-close]').forEach(button => button.addEventListener('click', () => $(button.dataset.close).close()));
 
 $('google-ingest-form').addEventListener('submit', async event => {
   event.preventDefault();
@@ -427,3 +560,280 @@ $('google-ingest-form').addEventListener('submit', async event => {
   } catch (error) { $('google-status').textContent = error.message; }
   finally { $('google-import').disabled = false; }
 });
+
+function renderPipeline(result) {
+  const table = node('table'); const head = node('tr');
+  result.columns.forEach(column => head.append(node('th', column)));
+  const thead = node('thead'); thead.append(head); table.append(thead);
+  const body = node('tbody');
+  result.rows.forEach(row => { const tr = node('tr'); row.forEach(cell => tr.append(node('td', cell === null ? 'NULL' : String(cell)))); body.append(tr); });
+  table.append(body); $('pipeline-results').replaceChildren(table);
+  $('pipeline-status').textContent = `${result.affected_rows} rows changed. ${result.row_count} result rows${result.truncated ? ' (preview limited to 500)' : ''}.`;
+}
+let pipelineBusy = false;
+async function pipelineAction(action) {
+  if (pipelineBusy) return;
+  pipelineBusy = true;
+  for (const id of ['run-sql', 'stage-upload', 'embed-staged', 'reset-knowledge']) $(id).disabled = true;
+  $('pipeline-status').textContent = 'Working…';
+  try { await action(); }
+  catch (error) { $('pipeline-status').textContent = error.message; }
+  finally { pipelineBusy = false; for (const id of ['run-sql', 'stage-upload', 'embed-staged', 'reset-knowledge']) $(id).disabled = false; }
+}
+$('open-pipeline').addEventListener('click', () => {
+  $('pipeline-dialog').showModal();
+  pipelineAction(async () => renderPipeline(await (await api('/api/pipeline')).json()));
+});
+$('sql-form').addEventListener('submit', event => {
+  event.preventDefault();
+  pipelineAction(async () => {
+    renderPipeline(await (await api('/api/pipeline/query', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({sql:$('pipeline-sql').value})})).json());
+  });
+});
+$('stage-upload').addEventListener('click', () => pipelineAction(async () => {
+  const file = $('stage-file').files[0]; if (!file) throw new Error('Choose a CSV or XLSX file first.');
+  const data = new FormData(); data.append('file', file);
+  const preview = await (await api('/api/ingest/preview', {method:'POST', body:data})).json();
+  if (preview.requires_mapping) {
+    const mapping = await chooseColumnMapping(preview);
+    if (!mapping) { $('pipeline-status').textContent = 'Upload cancelled.'; return; }
+    data.append('mapping', JSON.stringify(mapping));
+  }
+  const result = await (await api('/api/pipeline/stage', {method:'POST', body:data})).json();
+  renderPipeline(await (await api('/api/pipeline')).json());
+  $('pipeline-status').textContent = `${result.staged} reviews staged; ${result.skipped_blank_comments} blank comments skipped. Edit the data, then generate embeddings.`;
+}));
+$('embed-staged').addEventListener('click', () => pipelineAction(async () => {
+  const result = await (await api('/api/pipeline/embed', {method:'POST'})).json();
+  renderPipeline(await (await api('/api/pipeline')).json());
+  $('pipeline-status').textContent = `${result.added} updated reviews embedded and removed from staging.`;
+  await loadMetadata();
+}));
+
+let roleData = [];
+let permissionNames = [];
+function fillRoleForm() {
+  const role = roleData.find(r => r.name === $('role-select').value);
+  $('role-name').value = role?.name || ''; $('role-name').readOnly = !!role;
+  $('permission-fields').replaceChildren();
+  for (const permission of permissionNames) {
+    const label = node('label'); const checkbox = node('input'); checkbox.type = 'checkbox';
+    checkbox.value = permission; checkbox.checked = role?.permissions.includes(permission) || false;
+    label.append(checkbox, document.createTextNode(permission)); $('permission-fields').append(label);
+  }
+  $('role-delete').hidden = !role || ['ADMIN', 'USER'].includes(role.name);
+}
+async function loadRoles(selectedName = '') {
+  const data = await (await api('/api/roles')).json(); roleData = data.roles; permissionNames = data.permissions;
+  $('role-select').replaceChildren(new Option('Create new role…', ''), ...roleData.map(role => new Option(role.name, role.name)));
+  $('role-select').value = selectedName; fillRoleForm();
+}
+$('open-roles').addEventListener('click', async () => {
+  $('role-status').textContent = ''; $('roles-dialog').showModal();
+  try { await loadRoles(); } catch (error) { $('role-status').textContent = error.message; }
+});
+$('role-select').addEventListener('change', fillRoleForm);
+$('role-form').addEventListener('submit', async event => {
+  event.preventDefault(); $('role-save').disabled = true;
+  try {
+    const existing = $('role-select').value; const name = $('role-name').value;
+    const permissions = [...$('permission-fields').querySelectorAll('input:checked')].map(input => input.value);
+    await api(existing ? `/api/roles/${encodeURIComponent(existing)}` : '/api/roles', {method:existing ? 'PUT' : 'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, permissions})});
+    await loadProfiles();
+    if (can('roles:manage')) await loadRoles(name); else $('roles-dialog').close();
+    $('role-status').textContent = 'Role saved.';
+  } catch (error) { $('role-status').textContent = error.message; }
+  finally { $('role-save').disabled = false; }
+});
+$('role-delete').addEventListener('click', async () => {
+  $('role-delete').disabled = true;
+  try { await api(`/api/roles/${encodeURIComponent($('role-select').value)}`, {method:'DELETE'}); await loadRoles(); $('role-status').textContent = 'Role deleted.'; }
+  catch (error) { $('role-status').textContent = error.message; }
+  finally { $('role-delete').disabled = false; }
+});
+function renderRoleChoices(container, roles, assigned) {
+  container.querySelectorAll('label').forEach(label => label.remove());
+  for (const role of roles) {
+    const label = node('label'); const checkbox = node('input'); checkbox.type = 'checkbox';
+    checkbox.value = role.name; checkbox.checked = assigned.includes(role.name);
+    label.append(checkbox, document.createTextNode(` ${role.name}`)); container.append(label);
+  }
+}
+function selectedRoles(container) {
+  return [...container.querySelectorAll('input:checked')].map(input => input.value);
+}
+async function loadUsers() {
+  const {users} = await (await api('/api/users')).json();
+  const roles = can('roles:manage') ? (await (await api('/api/roles')).json()).roles : [{name:'USER'}];
+  $('users-list').replaceChildren();
+  for (const user of users) {
+    const form = node('form', undefined, 'user-editor');
+    form.append(node('h3', `${user.name} · ${user.roles.join(', ')}${user.active ? '' : ' · inactive'}`));
+    if (can('roles:manage')) {
+      const username = node('input'); username.value = user.username; username.required = true;
+      username.maxLength = 80; username.pattern = '[A-Za-z0-9]+';
+      const usernameLabel = node('label', `Username for ${user.name}`); usernameLabel.append(username);
+      const choices = node('fieldset'); choices.append(node('legend', `Roles for ${user.name}`));
+      renderRoleChoices(choices, roles, user.roles);
+      const active = node('input'); active.type = 'checkbox'; active.checked = !!user.active;
+      const label = node('label'); label.append(active, document.createTextNode(' Active account'));
+      const password = node('input'); password.type = 'password'; password.minLength = 12; password.maxLength = 256;
+      password.autocomplete = 'new-password'; password.placeholder = 'New password (optional, at least 12 characters)';
+      password.setAttribute('aria-label', `New password for ${user.name}`);
+      const email = node('input'); email.type = 'email'; email.maxLength = 254; email.value = user.email || '';
+      email.setAttribute('aria-label', `Recovery email for ${user.name}`); email.placeholder = 'Recovery email';
+      const phone = node('input'); phone.type = 'tel'; phone.maxLength = 80; phone.value = user.phone || '';
+      phone.setAttribute('aria-label', `Recovery phone for ${user.name}`); phone.placeholder = 'Recovery phone';
+      const countryGroup = node('div'); const country = makeCountrySelector(countryGroup, `country-${user.id}`);
+      const save = node('button', 'Save user', 'secondary'); save.type = 'submit';
+      form.append(usernameLabel, choices, label, email, countryGroup, phone, password, save);
+      form.addEventListener('submit', async event => {
+        event.preventDefault(); save.disabled = true;
+        try {
+          const body = {username:username.value, roles:selectedRoles(choices), active:active.checked, email:email.value, phone:phone.value, country:country.value}; if (password.value) body.password = password.value;
+          await api(`/api/users/${user.id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+          if (user.id === currentProfile.id && password.value) { location.reload(); return; }
+          await loadProfiles();
+          if (can('users:create')) await loadUsers(); else $('users-dialog').close();
+          $('users-status').textContent = 'User saved.';
+        } catch (error) { $('users-status').textContent = error.message; }
+        finally { save.disabled = false; }
+      });
+    }
+    const lowerPrivilege = currentProfile.active_role === 'ADMIN' && !user.roles.includes('ADMIN') && user.id !== currentProfile.id &&
+      user.permissions.length < currentProfile.permissions.length && user.permissions.every(permission => can(permission));
+    if (lowerPrivilege) {
+      const remove = node('button', 'Remove user', 'secondary'); remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove user ${user.name}`);
+      remove.addEventListener('click', async () => {
+        if (!confirm(`Remove ${user.name}? Their account and saved chats will be permanently deleted.`)) return;
+        remove.disabled = true;
+        try {
+          await api(`/api/users/${user.id}`, {method:'DELETE'});
+          await loadUsers(); $('users-status').textContent = 'User removed.';
+        } catch (error) { $('users-status').textContent = error.message; }
+        finally { remove.disabled = false; }
+      });
+      form.append(remove);
+    }
+    $('users-list').append(form);
+  }
+}
+$('open-users').addEventListener('click', async () => {
+  $('users-status').textContent = ''; $('users-dialog').showModal();
+  try { await loadUsers(); } catch (error) { $('users-status').textContent = error.message; }
+});
+
+$('reset-knowledge').addEventListener('click', () => {
+  if (pipelineBusy) return;
+  $('reset-knowledge-form').reset(); $('reset-confirm').disabled = true;
+  $('reset-dialog-status').textContent = ''; $('reset-knowledge-dialog').showModal();
+});
+$('reset-confirmation').addEventListener('input', () => {
+  $('reset-confirm').disabled = $('reset-confirmation').value !== 'CONFIRM' || pipelineBusy;
+});
+$('reset-cancel').addEventListener('click', () => $('reset-knowledge-dialog').close());
+$('reset-knowledge-dialog').addEventListener('cancel', event => { if (pipelineBusy) event.preventDefault(); });
+$('reset-knowledge-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const confirmation = $('reset-confirmation').value;
+  if (pipelineBusy || confirmation !== 'CONFIRM') return;
+  pipelineBusy = true;
+  for (const id of ['run-sql', 'stage-upload', 'embed-staged', 'reset-knowledge', 'reset-confirm', 'reset-cancel', 'reset-confirmation']) $(id).disabled = true;
+  $('reset-dialog-status').textContent = 'Removing all embedded reviews…';
+  try {
+    const result = await (await api('/api/pipeline/reset', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({confirmation})})).json();
+    $('reset-status').textContent = `${result.removed} embedded reviews removed. Knowledge bank is empty.`;
+    clearConversation(); rememberChat();
+    $('chat-status').textContent = 'Knowledge bank is empty. Stage and embed new reviews to chat.';
+    await Promise.all([loadMetadata(), refreshHistory()]);
+    $('reset-knowledge-dialog').close();
+  } catch (error) { $('reset-dialog-status').textContent = error.message; }
+  finally {
+    pipelineBusy = false;
+    for (const id of ['run-sql', 'stage-upload', 'embed-staged', 'reset-knowledge', 'reset-cancel', 'reset-confirmation']) $(id).disabled = false;
+    $('reset-confirm').disabled = $('reset-confirmation').value !== 'CONFIRM';
+  }
+});
+
+let recoveryOptions = null;
+function makeCountrySelector(container, id) {
+  const searchLabel = node('label', 'Search country or dial code'); searchLabel.htmlFor = `${id}-search`;
+  const search = node('input'); search.id = `${id}-search`; search.type = 'search'; search.placeholder = 'e.g. New Zealand, NZ, +64';
+  const label = node('label', 'Country / calling code'); label.htmlFor = id;
+  const select = node('select'); select.id = id;
+  const names = new Intl.DisplayNames(['en'], {type:'region'});
+  const entries = (recoveryOptions?.countries || []).map(country => ({...country, text:`${names.of(country.iso)} (${country.iso}) ${country.dial_code}`})).sort((a, b) => a.text.localeCompare(b.text));
+  let chosen = 'NZ';
+  function populate() {
+    const query = search.value.trim().toLowerCase();
+    select.replaceChildren(...entries.filter(entry => entry.text.toLowerCase().includes(query)).map(entry => new Option(entry.text, entry.iso, entry.iso === chosen, entry.iso === chosen)));
+    if ([...select.options].some(option => option.value === chosen)) select.value = chosen;
+    else if (select.options.length) select.selectedIndex = 0;
+  }
+  select.addEventListener('change', () => { chosen = select.value; });
+  search.addEventListener('input', populate); populate();
+  container.replaceChildren(searchLabel, search, label, select);
+  return select;
+}
+async function loadRecoveryOptions() {
+  recoveryOptions = await (await api('/api/auth/recovery/options')).json();
+  makeCountrySelector($('auth-country-fields'), 'auth-country');
+  makeCountrySelector($('recovery-country-fields'), 'recovery-country');
+  makeCountrySelector($('profile-country-fields'), 'profile-country');
+  updateRecoveryChannel();
+}
+$('auth-method').addEventListener('change', () => {
+  const phone = $('auth-method').value === 'phone';
+  $('auth-country-fields').hidden = !phone;
+  $('auth-name-label').textContent = phone ? 'Phone number' : 'Username or email';
+  $('auth-name').type = phone ? 'tel' : 'text';
+});
+let recoveryRequestId = null;
+let recoveryToken = null;
+function recoveryStep(step) {
+  for (const name of ['request', 'verify', 'password']) $(`recovery-${name}-form`).hidden = name !== step;
+  $('recovery-error').textContent = '';
+}
+function updateRecoveryChannel() {
+  const phone = $('recovery-channel').value === 'phone';
+  $('recovery-country-fields').hidden = !phone;
+  $('recovery-identifier-label').textContent = phone ? 'Phone number' : 'Email address';
+  $('recovery-identifier').type = phone ? 'tel' : 'email';
+  $('recovery-identifier').autocomplete = phone ? 'tel-national' : 'email';
+  $('recovery-dev').hidden = recoveryOptions?.delivery[$('recovery-channel').value] !== 'console';
+}
+$('recovery-channel').addEventListener('change', () => { $('recovery-identifier').value = ''; updateRecoveryChannel(); });
+$('forgot-password').addEventListener('click', () => {
+  recoveryRequestId = null; recoveryToken = null;
+  for (const name of ['request', 'verify', 'password']) $(`recovery-${name}-form`).reset();
+  recoveryStep('request'); updateRecoveryChannel(); $('recovery-dialog').showModal();
+});
+function clearRecovery() {
+  recoveryToken = null; recoveryRequestId = null;
+  $('recovery-code').value = ''; $('recovery-password').value = ''; $('recovery-confirm-password').value = '';
+}
+$('recovery-dialog').addEventListener('close', clearRecovery);
+$('recovery-cancel').addEventListener('click', () => $('recovery-dialog').close());
+$('recovery-resend').addEventListener('click', () => { clearRecovery(); recoveryStep('request'); });
+async function recoveryAction(event, action) {
+  event.preventDefault(); const button = event.submitter; button.disabled = true;
+  $('recovery-error').textContent = '';
+  try { await action(); }
+  catch (error) { $('recovery-error').textContent = error.message; }
+  finally { button.disabled = false; }
+}
+$('recovery-request-form').addEventListener('submit', event => recoveryAction(event, async () => {
+  const result = await (await api('/api/auth/recovery/request', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel:$('recovery-channel').value, identifier:$('recovery-identifier').value.trim(), country:$('recovery-country').value})})).json();
+  recoveryRequestId = result.request_id; recoveryStep('verify'); $('recovery-confirmation').textContent = result.message;
+}));
+$('recovery-verify-form').addEventListener('submit', event => recoveryAction(event, async () => {
+  const result = await (await api('/api/auth/recovery/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({request_id:recoveryRequestId, code:$('recovery-code').value})})).json();
+  recoveryToken = result.reset_token; $('recovery-code').value = ''; recoveryStep('password');
+}));
+$('recovery-password-form').addEventListener('submit', event => recoveryAction(event, async () => {
+  if ($('recovery-password').value !== $('recovery-confirm-password').value) throw new Error('Passwords do not match.');
+  const result = await (await api('/api/auth/recovery/complete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reset_token:recoveryToken, password:$('recovery-password').value, confirm_password:$('recovery-confirm-password').value})})).json();
+  $('recovery-dialog').close(); $('auth-password').value = ''; $('auth-error').textContent = '';
+  $('auth-notice').textContent = result.message; $('auth-password').focus();
+}));
