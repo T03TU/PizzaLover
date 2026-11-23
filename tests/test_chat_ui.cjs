@@ -19,28 +19,41 @@ const assert = require('node:assert/strict');
     }
     await login('Admin', 'admin-password-123');
     await page.waitForFunction(() => !document.getElementById('send').disabled);
+    assert.equal(await page.locator('.pane-controls').count(), 0);
+    assert.equal(await page.locator('.topbar #sign-out').count(), 0);
+    assert.equal(await page.locator('#sidebar #signed-in-alias').textContent(), 'Admin');
     const toggle = id => page.locator(`[data-pane="${id}"]`);
-    for (const id of ['sidebar', 'chat-pane', 'evidence-pane']) {
+    for (const id of ['sidebar', 'evidence-pane']) {
       await toggle(id).click();
       assert.equal(await page.locator(`#${id}`).isVisible(), false);
       assert.equal(await toggle(id).getAttribute('aria-expanded'), 'false');
+      assert.equal(await toggle(id).isVisible(), true);
+      assert.equal(await toggle(id).getAttribute('data-direction'), id === 'sidebar' ? 'right' : 'left');
     }
-    assert.equal(await page.locator('#panes-empty').isVisible(), true);
+    assert.equal(await page.locator('#chat-pane').isVisible(), true);
+    assert.equal(await page.locator('[data-pane="chat-pane"]').count(), 0);
     await page.reload();
     await page.waitForFunction(() => !document.getElementById('send').disabled);
-    assert.equal(await page.locator('#panes-empty').isVisible(), true);
-    for (const id of ['sidebar', 'chat-pane', 'evidence-pane']) await toggle(id).click();
+    assert.equal(await page.locator('#chat-pane').isVisible(), true);
+    assert.equal(await page.locator('[data-pane="chat-pane"]').count(), 0);
+    for (const id of ['sidebar', 'evidence-pane']) await toggle(id).click();
     const suffix = Date.now();
     const reader = `Reader ${suffix}`;
+    const readerUsername = `Reader${suffix}`;
     assert.equal(await page.locator('.topbar #add-profile').count(), 0);
     await page.locator('#settings').click();
+    assert.equal(await page.locator('[data-settings-group]:visible').count(), 2);
+    assert.equal(await page.locator('.settings-footer #sign-out').isVisible(), true);
+    assert.equal(await page.locator('#settings-username').textContent(), 'Admin');
+    await page.screenshot({path:'/tmp/pizzalover-settings-desktop.png'});
     await page.locator('#open-users').click();
     await page.locator('#add-profile').click();
     await page.locator('#profile-name').fill(reader);
+    await page.locator('#profile-username').fill(readerUsername);
     await page.locator('#profile-password').fill('reader-password-123');
     await page.locator('#profile-create').click();
     await page.locator('#profile-dialog').waitFor({state:'hidden'});
-    assert.equal(await page.locator('#profile option:checked').textContent(), 'Admin');
+    assert.equal(await page.locator('#signed-in-alias').textContent(), 'Admin');
     await page.locator('[data-close="users-dialog"]').click();
     await page.locator('[data-close="settings-dialog"]').click();
 
@@ -107,11 +120,10 @@ const assert = require('node:assert/strict');
     await page.waitForFunction(() => !document.getElementById('send').disabled && document.querySelectorAll('.message.assistant').length === 2);
     assert.equal(await page.locator('.feedback-controls').first().getByRole('button', {name:'👍 Thumbs Up'}).getAttribute('aria-pressed'), 'true');
     assert.equal(await page.locator('.review-card').count(), 2);
-    await toggle('chat-pane').click();
+    await page.evaluate(() => localStorage.setItem('pizzalover.pane.chat-pane', 'closed'));
     await page.reload();
     await page.waitForFunction(() => !document.getElementById('send').disabled);
-    assert.equal(await page.locator('#chat-pane').isVisible(), false);
-    await toggle('chat-pane').click();
+    assert.equal(await page.locator('#chat-pane').isVisible(), true);
     await toggle('evidence-pane').click();
     await page.locator('.message.assistant .citation').first().click();
     assert.equal(await page.locator('#evidence-pane').isVisible(), true);
@@ -138,27 +150,31 @@ const assert = require('node:assert/strict');
 
     for (const width of [1440, 1000, 850, 390]) {
       await page.setViewportSize({width, height:1000});
-      for (let mask = 0; mask < 8; mask++) {
-        for (const [index, id] of ['sidebar', 'chat-pane', 'evidence-pane'].entries()) {
+      for (let mask = 0; mask < 4; mask++) {
+        for (const [index, id] of ['sidebar', 'evidence-pane'].entries()) {
           const visible = !(mask & (1 << index));
           if ((await toggle(id).getAttribute('aria-expanded') === 'true') !== visible) await toggle(id).click();
         }
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `Overflow at ${width}px, mask ${mask}`);
       }
-      for (const id of ['sidebar', 'chat-pane', 'evidence-pane']) await toggle(id).click();
+      for (const id of ['sidebar', 'evidence-pane']) await toggle(id).click();
     }
     await page.setViewportSize({width:1440, height:1000});
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({path:'/tmp/pizzalover-rbac-desktop.png', fullPage:true});
     await page.setViewportSize({width:390, height:900});
     await page.screenshot({path:'/tmp/pizzalover-rbac-mobile.png', fullPage:true});
+    await page.locator('#settings').click();
     await page.locator('#sign-out').click();
-    await login(reader, 'reader-password-123');
+    await login(readerUsername, 'reader-password-123');
     await page.waitForFunction(() => !document.getElementById('send').disabled);
     assert.equal(await page.locator('.history-item').count(), 0);
     assert.equal(await page.locator('#add-profile').isVisible(), false);
     await page.locator('#settings').click();
     assert.equal(await page.locator('#settings-dialog').isVisible(), true);
     for (const id of ['open-pipeline', 'open-roles', 'open-users']) assert.equal(await page.locator(`#${id}`).isVisible(), false);
+    assert.equal(await page.locator('[data-settings-group]:visible').count(), 0);
+    await page.screenshot({path:'/tmp/pizzalover-settings-user-mobile.png'});
     await page.locator('[data-close="settings-dialog"]').click();
     assert.equal(await page.evaluate(async () => (await fetch('/api/pipeline')).status), 403);
     await ask('Reader question');
@@ -207,7 +223,7 @@ const assert = require('node:assert/strict');
     await adminPage.locator('#settings').click();
     await adminPage.locator('#open-users').click();
     const readerForm = adminPage.locator('.user-editor').filter({hasText:reader});
-    await readerForm.locator('input[type="checkbox"]').uncheck();
+    await readerForm.getByRole('checkbox', {name:'Active account', exact:true}).uncheck();
     await readerForm.getByRole('button', {name:'Save user', exact:true}).click();
     await adminPage.waitForFunction(() => document.getElementById('users-status').textContent === 'User saved.');
     await page.reload();

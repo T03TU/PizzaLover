@@ -52,6 +52,7 @@ const fs = require('node:fs');
       await page.locator('#auth-form button[type=submit]').click();
       await page.locator('#auth-dialog').waitFor({state:'hidden'});
       await page.waitForFunction(() => !document.getElementById('sign-out').disabled);
+      await page.locator('#settings').click();
       await page.locator('#sign-out').click();
       await page.locator('#auth-dialog').waitFor({state:'visible'});
     }

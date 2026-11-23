@@ -167,7 +167,25 @@ permissions independently and returns 403 for authenticated, unauthorized
 requests (401 for missing/expired credentials). Chat-only roles cannot obtain
 scores from SSE, saved chats, or evaluation endpoints.
 
-Use **Settings → Manage users → ＋ User** to create password-protected accounts. `users:create` permits
+Use **Settings → Manage users → ＋ User** to create password-protected accounts.
+Enter a separate username (1–80 ASCII letters and numbers, case-insensitively
+unique), display name, optional email and phone, and select one or more roles.
+For example, `Analyst42` is a username; the display name can contain spaces.
+Administrators can edit usernames and check/uncheck multiple roles in Manage
+users. The top of the left panel shows **Signed in as** with the username. The header
+contains an **Active role** selector for the assigned roles. **Sign out** is in
+Settings, in a separate session footer. Settings groups the data pipeline under
+Workspace and places user management before role configuration under People &
+permissions. Its account card shows the signed-in username and active role;
+groups without permitted options are hidden. Small, thin chevron controls collapse and expand the left and right
+panels. The chat is always visible. Side-panel handles remain available when
+collapsed, and the selection survives reloads; old chat-collapse preferences are
+ignored. A session uses only its selected role's
+permissions. Switching roles immediately updates controls and API access without
+signing out. The selection survives reloads and is independent for separate
+sign-in sessions. If an active role is unassigned, the session falls back to an
+assigned role. Accounts with no permissions in their current role can still
+switch to another assigned role. `users:create` permits
 creating default USER accounts; assigning other roles also requires
 `roles:manage`. **Settings → Roles and permissions** creates custom named roles
 and toggles their permissions. **Manage users** lists accounts; updating roles,
@@ -178,8 +196,8 @@ are retained. Self-removal, other ADMIN accounts, and roles with equal or greate
 permissions are protected. Uncheck **Active account** to immediately restrict
 sign-in without deleting history, or assign a role with fewer permissions.
 Default roles cannot be deleted. An assigned custom role must be reassigned
-before deletion. The last active ADMIN cannot be demoted or deactivated, and
-`roles:manage` cannot be removed from ADMIN. These operations use serialized
+before deletion. The last active account with ADMIN membership cannot lose that membership, be
+deactivated, or lose its effective `roles:manage` permission. These operations use serialized
 SQLite transactions. Role changes affect existing sessions on their next request;
 password resets and deactivation revoke sessions.
 
@@ -194,9 +212,41 @@ sessions use opaque random cookies with HttpOnly/SameSite=Strict and server-side
 expiry. HTTPS sets Secure cookies. Run behind HTTPS if exposing the service
 beyond the trusted local machine.
 
+The migration carries each existing primary role into a `profile_roles`
+membership table and preserves account IDs, passwords, contacts, sessions and
+conversations. Existing names receive a unique alphanumeric username by removing
+non-alphanumeric characters and adding a numeric suffix for collisions (or using
+`User` if no ASCII letters/numbers remain). The ADMIN username remains ADMIN.
+Admins can see and edit migrated usernames in Manage users.
+
+User API examples:
+
+```json
+{"name":"Jamie Smith","username":"Jamie42","password":"a-long-password-123","roles":["USER","REVIEWER"]}
+```
+
+`PATCH /api/users/{id}` accepts `username` and a `roles` array, which replaces the
+complete assignment. At least one existing role is required; unknown or duplicate
+roles are rejected atomically. Creating non-default role assignments and updating
+accounts require `roles:manage` as well as `users:create`. The legacy singular
+`role` input still replaces assignments with one role; do not send both fields.
+User-management responses include `username`, assigned `roles`, their combined
+`permissions` for administration, and the legacy primary `role`. Session responses
+(`/api/profiles` and login) include `active_role` and permissions for that role
+only; their `role` field reflects the active role. Authorization checks the
+server-side session selection. `POST /api/auth/role` with `{"role":"USER"}`
+switches to an assigned role. The endpoint requires sign-in, even when the current
+role has no permissions. Admin-only actions require ADMIN to be selected.
+The UI sends `X-Active-Role` on protected requests; stale tabs receive 409 and must
+reload. Role switching closes open settings dialogs and reloads conversation data
+under the newly selected role so unavailable scores and controls are removed.
+Feedback records retain a snapshot of all assigned roles in addition to the
+legacy role field. Email and phone recovery continue to use normalized contacts.
+
 ### Sign-in and password recovery
 
-Sign in with an account name, email, or phone number. For local phone numbers,
+Sign in with a username, email, or phone number. Display names are separate
+from sign-in usernames. Username sign-in ignores letter casing. For local phone numbers,
 select the country using the searchable country/calling-code dropdown. Numbers
 are validated and stored in E.164 format; email addresses are trimmed and
 case-normalized. Recovery email and phone can be set while creating a user or
@@ -297,7 +347,7 @@ Additional API endpoints (all except auth status/setup/login require sign-in):
 | `GET /api/profiles` | Current account and permissions |
 | `GET/POST /api/users` | `users:create`; list/create accounts |
 | `DELETE /api/users/{id}` | ADMIN + `users:create`; remove strictly lower-privilege accounts |
-| `PATCH /api/users/{id}` | `users:create` + `roles:manage`; role/active/password updates |
+| `PATCH /api/users/{id}` | `users:create` + `roles:manage`; username/roles/active/password updates |
 | `GET/POST /api/roles`, `PUT/DELETE /api/roles/{name}` | `roles:manage` |
 | `GET /api/pipeline` | `pipeline:manage`; staging preview |
 | `POST /api/pipeline/stage` | `pipeline:manage`; validated JSON/CSV/XLSX staging |

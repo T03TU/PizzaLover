@@ -8,7 +8,7 @@ let selected = null;
 let currentProfile = null;
 let activeChatId = null;
 let historyBusy = true;
-const paneLabels = {sidebar:'controls & history','chat-pane':'chat','evidence-pane':'evidence & tests'};
+const paneLabels = {sidebar:'controls & history','evidence-pane':'evidence & tests'};
 
 function readPreference(key) {
   try { return localStorage.getItem(key); } catch (_) { return null; }
@@ -17,15 +17,21 @@ function savePreference(key, value) {
   try { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); } catch (_) { /* Storage may be disabled. */ }
 }
 function setPaneVisible(id, visible) {
+  if (id === 'chat-pane') { $('chat-pane').hidden = false; return; }
   $(id).hidden = !visible;
   const button = document.querySelector(`[data-pane="${id}"]`);
   button.setAttribute('aria-expanded', String(visible));
-  button.textContent = `${visible ? 'Hide' : 'Show'} ${paneLabels[id]}`;
-  const key = {sidebar:'sidebarHidden','chat-pane':'chatHidden','evidence-pane':'evidenceHidden'}[id];
+  const collapseLeft = id === 'sidebar';
+  button.dataset.direction = (visible === collapseLeft) ? 'left' : 'right';
+  button.setAttribute('aria-label', `${visible ? 'Collapse' : 'Expand'} ${paneLabels[id]}`);
+  button.title = button.getAttribute('aria-label');
+  $(`${id}-shell`).dataset.collapsed = String(!visible);
+  const key = {sidebar:'sidebarHidden','evidence-pane':'evidenceHidden'}[id];
   $('workspace').dataset[key] = String(!visible);
-  $('panes-empty').hidden = Object.keys(paneLabels).some(pane => !$(pane).hidden);
   savePreference(`pizzalover.pane.${id}`, visible ? 'open' : 'closed');
 }
+// Retire the old chat-pane preference: chat is always visible.
+savePreference('pizzalover.pane.chat-pane', null);
 document.querySelectorAll('[data-pane]').forEach(button => {
   const id = button.dataset.pane;
   setPaneVisible(id, readPreference(`pizzalover.pane.${id}`) !== 'closed');
@@ -36,8 +42,14 @@ function can(permission) { return !!currentProfile?.permissions.includes(permiss
 function applyPermissions() {
   document.querySelectorAll('[data-permission]').forEach(el => { el.hidden = !can(el.dataset.permission); });
   $('add-profile').hidden = !can('users:create');
-  $('reset-knowledge').hidden = currentProfile?.role !== 'ADMIN' || !can('pipeline:manage');
-  $('account-summary').textContent = currentProfile ? `${currentProfile.name} · ${currentProfile.role}` : '';
+  $('reset-knowledge').hidden = currentProfile?.active_role !== 'ADMIN' || !can('pipeline:manage');
+  $('settings-username').textContent = currentProfile?.username || '';
+  $('settings-active-role').textContent = currentProfile?.active_role || '';
+  $('settings-active-role').title = currentProfile ? `Active role: ${currentProfile.active_role}` : '';
+  $('settings-avatar').textContent = currentProfile?.username.slice(0, 2).toUpperCase() || '';
+  document.querySelectorAll('[data-settings-group]').forEach(group => {
+    group.hidden = ![...group.querySelectorAll('[data-permission]')].some(option => !option.hidden);
+  });
   $('question').disabled = !can('chat:use');
   $('eval').disabled = !can('scorecards:view');
   if (!can('scorecards:view')) { $('eval').checked = false; renderScores(null); }
@@ -46,7 +58,7 @@ function applyPermissions() {
 }
 function updateNavigation() {
   const busy = historyBusy || !!activeController;
-  $('profile').disabled = true;
+  $('active-role').disabled = busy || !currentProfile || currentProfile.roles.length < 2;
   $('add-profile').disabled = busy || !can('users:create');
   for (const id of ['new-chat', 'send']) $(id).disabled = busy || !can('chat:use');
   $('settings').disabled = !currentProfile;
@@ -104,9 +116,9 @@ async function loadChat(id, reveal = true) {
 async function loadProfiles() {
   const data = await (await api('/api/profiles')).json();
   currentProfile = data.current;
-  $('profile').replaceChildren();
-  data.profiles.forEach(profile => $('profile').add(new Option(profile.name, profile.id)));
-  $('profile').value = currentProfile.id;
+  $('signed-in-alias').textContent = currentProfile.username;
+  $('active-role').replaceChildren(...currentProfile.roles.map(role => new Option(role, role)));
+  $('active-role').value = currentProfile.active_role;
   applyPermissions();
 }
 async function restoreProfileChat() {
@@ -114,7 +126,7 @@ async function restoreProfileChat() {
   const chats = await refreshHistory();
   const previous = readPreference(`pizzalover.chat.${currentProfile.id}`);
   if (chats.some(chat => chat.id === previous)) await loadChat(previous, false);
-  else { rememberChat(); $('chat-status').textContent = `Ready for ${currentProfile.name}.`; }
+  else { rememberChat(); $('chat-status').textContent = `Ready for ${currentProfile.username}.`; }
 }
 async function navigateHistory(action) {
   if (activeController || historyBusy) return;
@@ -132,7 +144,10 @@ function node(tag, text, className) {
 }
 async function api(path, options = {}) {
   const headers = new Headers(options.headers);
-  if (currentProfile && !path.startsWith('/api/auth/')) headers.set('X-Profile-ID', currentProfile.id);
+  if (currentProfile && !path.startsWith('/api/auth/')) {
+    headers.set('X-Profile-ID', currentProfile.id);
+    if (path !== '/api/profiles' || options.method === 'POST') headers.set('X-Active-Role', currentProfile.active_role);
+  }
   const response = await fetch(path, {...options, headers});
   if (!response.ok) {
     let detail = `Request failed (${response.status})`;
@@ -372,12 +387,12 @@ $('new-chat').addEventListener('click', () => {
   refreshHistory().catch(error => showError(error.message));
 });
 $('add-profile').addEventListener('click', async () => {
-  $('profile-form').reset(); $('profile-error').textContent = ''; $('profile-role').replaceChildren(new Option('USER', 'USER'));
+  $('profile-form').reset(); $('profile-error').textContent = '';
+  renderRoleChoices($('profile-roles'), [{name:'USER'}], ['USER']);
   try {
     if (can('roles:manage')) {
       const {roles} = await (await api('/api/roles')).json();
-      $('profile-role').replaceChildren(...roles.map(role => new Option(role.name, role.name)));
-      $('profile-role').value = 'USER';
+      renderRoleChoices($('profile-roles'), roles, ['USER']);
     }
     $('profile-dialog').showModal();
   } catch (error) { showError(error.message); }
@@ -389,7 +404,7 @@ $('profile-form').addEventListener('submit', async event => {
   if (!name || historyBusy || activeController) return;
   historyBusy = true; updateNavigation(); $('profile-create').disabled = true;
   try {
-    await api('/api/profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, password:$('profile-password').value, role:$('profile-role').value, email:$('profile-email').value, phone:$('profile-phone').value, country:$('profile-country').value})});
+    await api('/api/profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, password:$('profile-password').value, username:$('profile-username').value, roles:selectedRoles($('profile-roles')), email:$('profile-email').value, phone:$('profile-phone').value, country:$('profile-country').value})});
     $('profile-dialog').close();
     if ($('users-dialog').open) await loadUsers();
   } catch (error) { $('profile-error').textContent = error.message; }
@@ -498,7 +513,7 @@ let setupRequired = false;
     $('setup-token').required = setupRequired;
     $('auth-password').minLength = setupRequired ? 12 : 1;
     $('auth-title').textContent = setupRequired ? 'Set up administrator' : 'Sign in';
-    $('auth-help').textContent = setupRequired ? 'Use the setup token printed in the server console and choose a password of at least 12 characters. Existing installations keep the oldest profile as administrator.' : 'Use your account name, email or phone number and password.';
+    $('auth-help').textContent = setupRequired ? 'Use the setup token printed in the server console and choose a password of at least 12 characters. Existing installations keep the oldest profile as administrator.' : 'Use your username, email or phone number and password.';
     $('auth-dialog').showModal();
   } catch (error) { showError(error.message); }
 })();
@@ -507,7 +522,7 @@ $('auth-form').addEventListener('submit', async event => {
   event.preventDefault();
   const button = event.submitter; button.disabled = true;
   try {
-    const body = {name:$('auth-name').value.trim(), password:$('auth-password').value, country:$('auth-country').value};
+    const body = {name:$('auth-name').value.trim(), password:$('auth-password').value, country:$('auth-country').value, identifier_type:$('auth-method').value};
     if (setupRequired) body.token = $('setup-token').value.trim();
     await api(setupRequired ? '/api/auth/setup' : '/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     $('auth-password').value = ''; $('setup-token').value = '';
@@ -515,6 +530,17 @@ $('auth-form').addEventListener('submit', async event => {
   } catch (error) { $('auth-error').textContent = error.message; }
   finally { button.disabled = false; }
 });
+$('active-role').addEventListener('change', () => navigateHistory(async () => {
+  const role = $('active-role').value;
+  try {
+    currentProfile = await (await api('/api/auth/role', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({role})})).json();
+    // Close privileged dialogs and reload scoped conversation data under the new role.
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    $('connection-error').hidden = true;
+    await loadProfiles(); await restoreProfileChat();
+    await Promise.all([loadMetadata(), refreshSummary()]);
+  } finally { $('active-role').value = currentProfile.active_role; }
+}));
 $('sign-out').addEventListener('click', async () => {
   try { await api('/api/auth/logout', {method:'POST'}); location.reload(); }
   catch (error) { showError(error.message); }
@@ -625,16 +651,30 @@ $('role-delete').addEventListener('click', async () => {
   catch (error) { $('role-status').textContent = error.message; }
   finally { $('role-delete').disabled = false; }
 });
+function renderRoleChoices(container, roles, assigned) {
+  container.querySelectorAll('label').forEach(label => label.remove());
+  for (const role of roles) {
+    const label = node('label'); const checkbox = node('input'); checkbox.type = 'checkbox';
+    checkbox.value = role.name; checkbox.checked = assigned.includes(role.name);
+    label.append(checkbox, document.createTextNode(` ${role.name}`)); container.append(label);
+  }
+}
+function selectedRoles(container) {
+  return [...container.querySelectorAll('input:checked')].map(input => input.value);
+}
 async function loadUsers() {
   const {users} = await (await api('/api/users')).json();
   const roles = can('roles:manage') ? (await (await api('/api/roles')).json()).roles : [{name:'USER'}];
   $('users-list').replaceChildren();
   for (const user of users) {
     const form = node('form', undefined, 'user-editor');
-    form.append(node('h3', `${user.name} · ${user.role}${user.active ? '' : ' · inactive'}`));
+    form.append(node('h3', `${user.name} · ${user.roles.join(', ')}${user.active ? '' : ' · inactive'}`));
     if (can('roles:manage')) {
-      const select = node('select'); select.setAttribute('aria-label', `Role for ${user.name}`);
-      roles.forEach(role => select.add(new Option(role.name, role.name))); select.value = user.role;
+      const username = node('input'); username.value = user.username; username.required = true;
+      username.maxLength = 80; username.pattern = '[A-Za-z0-9]+';
+      const usernameLabel = node('label', `Username for ${user.name}`); usernameLabel.append(username);
+      const choices = node('fieldset'); choices.append(node('legend', `Roles for ${user.name}`));
+      renderRoleChoices(choices, roles, user.roles);
       const active = node('input'); active.type = 'checkbox'; active.checked = !!user.active;
       const label = node('label'); label.append(active, document.createTextNode(' Active account'));
       const password = node('input'); password.type = 'password'; password.minLength = 12; password.maxLength = 256;
@@ -646,11 +686,11 @@ async function loadUsers() {
       phone.setAttribute('aria-label', `Recovery phone for ${user.name}`); phone.placeholder = 'Recovery phone';
       const countryGroup = node('div'); const country = makeCountrySelector(countryGroup, `country-${user.id}`);
       const save = node('button', 'Save user', 'secondary'); save.type = 'submit';
-      form.append(select, label, email, countryGroup, phone, password, save);
+      form.append(usernameLabel, choices, label, email, countryGroup, phone, password, save);
       form.addEventListener('submit', async event => {
         event.preventDefault(); save.disabled = true;
         try {
-          const body = {role:select.value, active:active.checked, email:email.value, phone:phone.value, country:country.value}; if (password.value) body.password = password.value;
+          const body = {username:username.value, roles:selectedRoles(choices), active:active.checked, email:email.value, phone:phone.value, country:country.value}; if (password.value) body.password = password.value;
           await api(`/api/users/${user.id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
           if (user.id === currentProfile.id && password.value) { location.reload(); return; }
           await loadProfiles();
@@ -660,7 +700,7 @@ async function loadUsers() {
         finally { save.disabled = false; }
       });
     }
-    const lowerPrivilege = currentProfile.role === 'ADMIN' && user.role !== 'ADMIN' && user.id !== currentProfile.id &&
+    const lowerPrivilege = currentProfile.active_role === 'ADMIN' && !user.roles.includes('ADMIN') && user.id !== currentProfile.id &&
       user.permissions.length < currentProfile.permissions.length && user.permissions.every(permission => can(permission));
     if (lowerPrivilege) {
       const remove = node('button', 'Remove user', 'secondary'); remove.type = 'button';
@@ -746,7 +786,7 @@ async function loadRecoveryOptions() {
 $('auth-method').addEventListener('change', () => {
   const phone = $('auth-method').value === 'phone';
   $('auth-country-fields').hidden = !phone;
-  $('auth-name-label').textContent = phone ? 'Phone number' : 'Account name or email';
+  $('auth-name-label').textContent = phone ? 'Phone number' : 'Username or email';
   $('auth-name').type = phone ? 'tel' : 'text';
 });
 let recoveryRequestId = null;

@@ -1,0 +1,53 @@
+/* Run against tests/ui_server.py with Playwright installed. */
+const {chromium} = require(process.env.PLAYWRIGHT_PATH || 'playwright');
+const assert = require('node:assert/strict');
+(async () => {
+  const browser = await chromium.launch({executablePath:process.env.CHROME_PATH || '/usr/bin/google-chrome',headless:true,args:['--no-sandbox']});
+  try {
+    const context = await browser.newContext();
+    await context.request.post('http://127.0.0.1:8765/api/auth/login',{data:{name:'Admin',password:'admin-password-123'}});
+    const suffix=Date.now(); const role=`Editor ${suffix}`;
+    await context.request.post('http://127.0.0.1:8765/api/roles',{data:{name:role,permissions:['pipeline:manage']}});
+    const page=await context.newPage(); const errors=[];
+    page.on('pageerror',error=>errors.push(error.message));
+    await page.goto('http://127.0.0.1:8765');
+    await page.waitForFunction(()=>!document.getElementById('send').disabled);
+    await page.locator('#settings').click(); await page.locator('#open-users').click();
+    await page.locator('#add-profile').click();
+    await page.locator('#profile-name').fill(`Display Alias ${suffix}`);
+    await page.locator('#profile-username').fill(`Alias${suffix}`);
+    await page.locator('#profile-password').fill('browser-alias-password-123');
+    await page.locator('#profile-email').fill(`alias${suffix}@example.com`);
+    await page.locator('#profile-roles').getByRole('checkbox',{name:role,exact:true}).check();
+    await page.locator('#profile-create').click();
+    await page.locator('#profile-dialog').waitFor({state:'hidden'});
+    const users=(await (await context.request.get('http://127.0.0.1:8765/api/users')).json()).users;
+    const user=users.find(user=>user.username===`Alias${suffix}`);
+    assert.deepEqual(new Set(user.roles),new Set(['USER',role]));
+    assert.equal(user.permissions.includes('pipeline:manage'),true);
+    const form=page.locator('.user-editor').filter({hasText:`Display Alias ${suffix}`});
+    await form.getByRole('checkbox',{name:'USER',exact:true}).uncheck();
+    await form.getByLabel(`Username for Display Alias ${suffix}`).fill(`Changed${suffix}`);
+    await form.getByRole('button',{name:'Save user',exact:true}).click();
+    await page.waitForFunction(()=>document.getElementById('users-status').textContent==='User saved.');
+    const persisted=(await (await context.request.get('http://127.0.0.1:8765/api/users')).json()).users.find(u=>u.id===user.id);
+    assert.deepEqual(persisted.roles,[role]); assert.equal(persisted.username,`Changed${suffix}`);
+    const other=await browser.newContext(); const userPage=await other.newPage();
+    userPage.on('pageerror',error=>errors.push(error.message));
+    await userPage.goto('http://127.0.0.1:8765');
+    await userPage.locator('#auth-dialog').waitFor({state:'visible'});
+    await userPage.locator('#auth-name').fill(`cHANGED${suffix}`);
+    await userPage.locator('#auth-password').fill('browser-alias-password-123');
+    await userPage.locator('#auth-form button[type=submit]').click();
+    await userPage.locator('#auth-dialog').waitFor({state:'hidden'});
+    await userPage.waitForFunction(()=>!document.getElementById('settings').disabled);
+    assert.equal(await userPage.locator('#send').isDisabled(),true);
+    await userPage.locator('#settings').click();
+    assert.equal(await userPage.locator('#open-pipeline').isVisible(),true);
+    assert.equal(await userPage.locator('#open-users').isVisible(),false);
+    assert.match(await userPage.locator('#account-summary').textContent(),new RegExp(`Changed${suffix}`));
+    assert.deepEqual(errors,[]);
+    console.log('PASS: multi-role selection on creation/edit, role union, alphanumeric username independent of display name/email, case-insensitive username sign-in, and restricted-role UI.');
+    await other.close(); await context.close();
+  } finally { await browser.close(); }
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -3,7 +3,7 @@
 from uuid import UUID
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class Filters(BaseModel):
@@ -65,6 +65,7 @@ class GoogleIngestRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
+    identifier_type: Literal['account', 'phone'] | None = None
     country: str = Field(default='NZ', pattern=r'^[A-Z]{2}$')
     name: str = Field(min_length=1, max_length=254)
     password: str = Field(min_length=1, max_length=256)
@@ -77,14 +78,24 @@ class SetupRequest(LoginRequest):
 
 
 class UserCreateRequest(ProfileRequest):
+    username: str | None = Field(default=None, pattern=r'^[A-Za-z0-9]{1,80}$')
+    roles: list[str] | None = Field(default=None, min_length=1, max_length=50)
     email: str | None = Field(default=None, max_length=254)
     phone: str | None = Field(default=None, max_length=80)
     country: str = Field(default='NZ', pattern=r'^[A-Z]{2}$')
     password: str = Field(min_length=12, max_length=256)
-    role: str = Field(default='USER', pattern=r'^[A-Za-z0-9][A-Za-z0-9 _-]{0,49}$')
+    role: str | None = Field(default=None, pattern=r'^[A-Za-z0-9][A-Za-z0-9 _-]{0,49}$')
+
+    @model_validator(mode='after')
+    def exclusive_role_fields(self):
+        if self.role is not None and self.roles is not None:
+            raise ValueError('Supply roles or the legacy role field, not both')
+        return self
 
 
 class UserUpdateRequest(BaseModel):
+    username: str | None = Field(default=None, pattern=r'^[A-Za-z0-9]{1,80}$')
+    roles: list[str] | None = Field(default=None, min_length=1, max_length=50)
     email: str | None = Field(default=None, max_length=254)
     phone: str | None = Field(default=None, max_length=80)
     country: str = Field(default='NZ', pattern=r'^[A-Z]{2}$')
@@ -92,6 +103,12 @@ class UserUpdateRequest(BaseModel):
     role: str | None = Field(default=None, pattern=r'^[A-Za-z0-9][A-Za-z0-9 _-]{0,49}$')
     active: bool | None = None
     password: str | None = Field(default=None, min_length=12, max_length=256)
+
+    @model_validator(mode='after')
+    def exclusive_role_fields(self):
+        if self.role is not None and self.roles is not None:
+            raise ValueError('Supply roles or the legacy role field, not both')
+        return self
 
 
 class RoleRequest(BaseModel):
@@ -135,3 +152,8 @@ class RecoveryCompleteRequest(BaseModel):
     reset_token: str = Field(min_length=20, max_length=200)
     password: str = Field(min_length=12, max_length=256)
     confirm_password: str = Field(min_length=12, max_length=256)
+
+
+class SwitchRoleRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    role: str = Field(min_length=1, max_length=50)

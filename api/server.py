@@ -21,7 +21,7 @@ from pydantic import ValidationError
 
 import config
 from api.schemas import (ChatRequest, GoogleIngestRequest, RagasScores, Review, LoginRequest,
-                         SetupRequest, UserCreateRequest, UserUpdateRequest, RoleRequest, SQLRequest, FeedbackRequest, KnowledgeResetRequest, RecoveryRequest, RecoveryVerifyRequest, RecoveryCompleteRequest)
+                         SetupRequest, UserCreateRequest, UserUpdateRequest, RoleRequest, SQLRequest, FeedbackRequest, KnowledgeResetRequest, RecoveryRequest, RecoveryVerifyRequest, RecoveryCompleteRequest, SwitchRoleRequest)
 from src.chat_history import ChatHistory
 from src.access import Access, PERMISSIONS
 from src.pipeline import Pipeline
@@ -113,6 +113,9 @@ async def current_profile(request):
     expected = request.headers.get("X-Profile-ID")
     if expected and expected != profile['id']:
         raise HTTPException(409, "The account changed in another tab. Reload before continuing.")
+    expected_role = request.headers.get('X-Active-Role')
+    if expected_role and expected_role != profile['active_role']:
+        raise HTTPException(409, 'The active role changed in another tab. Reload before continuing.')
     return profile
 
 
@@ -174,7 +177,7 @@ async def setup(body: SetupRequest, request: Request, response: Response):
         raise access_error(exc) from exc
     token = await asyncio.to_thread(request.app.state.access.session, user['id'])
     set_profile_cookie(response, token, request)
-    return user
+    return await asyncio.to_thread(request.app.state.access.current, token)
 
 
 @app.post('/api/auth/login')
@@ -184,12 +187,20 @@ async def login(body: LoginRequest, request: Request, response: Response):
     except RateLimited as exc:
         raise HTTPException(429, str(exc), headers={'Retry-After': '600'}) from exc
     try:
-        user = await asyncio.to_thread(request.app.state.access.login, body.name.strip(), body.password, body.country)
+        user = await asyncio.to_thread(request.app.state.access.login, body.name.strip(), body.password, body.country, body.identifier_type)
     except PermissionError as exc:
         raise HTTPException(401, str(exc)) from exc
     token = await asyncio.to_thread(request.app.state.access.session, user['id'])
     set_profile_cookie(response, token, request)
-    return user
+    return await asyncio.to_thread(request.app.state.access.current, token)
+
+
+@app.post('/api/auth/role')
+async def switch_role(body: SwitchRoleRequest, request: Request):
+    try:
+        return await asyncio.to_thread(request.app.state.access.switch_role, request.cookies.get(PROFILE_COOKIE, ''), body.role)
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
 
 
 @app.get('/api/auth/recovery/options')
@@ -248,10 +259,11 @@ async def profiles(request: Request, response: Response):
 @app.post('/api/users', status_code=201)
 async def create_profile(body: UserCreateRequest, request: Request):
     user = await current_profile(request)
-    if body.role != 'USER' and 'roles:manage' not in user['permissions']:
+    assigned_roles = body.roles if body.roles is not None else [body.role or 'USER']
+    if assigned_roles != ['USER'] and 'roles:manage' not in user['permissions']:
         raise HTTPException(403, 'roles:manage is required to assign roles')
     try:
-        return await asyncio.to_thread(request.app.state.access.create_user, body.name, body.password, body.role, body.email, body.phone, body.country)
+        return await asyncio.to_thread(request.app.state.access.create_user, body.name, body.password, body.role or 'USER', body.email, body.phone, body.country, assigned_roles, body.username)
     except (ValueError, sqlite3.IntegrityError) as exc:
         raise access_error(exc) from exc
 
@@ -281,6 +293,8 @@ async def update_user(user_id: UUID, body: UserUpdateRequest, request: Request):
 @app.delete('/api/users/{user_id}', status_code=204)
 async def remove_user(user_id: UUID, request: Request):
     actor = await current_profile(request)
+    if actor['active_role'] != 'ADMIN':
+        raise HTTPException(403, 'Switch to ADMIN to remove users')
     try:
         await finish_thread(request.app.state.access.remove_user, actor['id'], str(user_id))
     except (PermissionError, KeyError, ValueError) as exc:
@@ -574,7 +588,7 @@ async def ingest_google(body: GoogleIngestRequest, request: Request):
 @app.post('/api/pipeline/reset')
 async def reset_knowledge(body: KnowledgeResetRequest, request: Request):
     actor = await current_profile(request)
-    if actor['role'] != 'ADMIN':
+    if actor['active_role'] != 'ADMIN':
         raise HTTPException(403, 'Only ADMIN can reset the knowledge bank')
     async with request.app.state.model_lock:
         def clear_index():

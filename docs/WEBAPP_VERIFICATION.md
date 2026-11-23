@@ -5,7 +5,7 @@ No review ingestion tests write to the production index.
 
 ## Automated checks
 
-- `venv/bin/python -m unittest discover -s tests -v`: 53 passing tests.
+- `venv/bin/python -m unittest discover -s tests -v`: 64 passing tests.
 - `node tests/test_sse_parser.cjs`: passes byte-by-byte UTF-8 chunks, split SSE
   frames, CRLF separators, evaluation heartbeat status, and termination events.
 - `node --check static/app.js`: passes.
@@ -23,6 +23,22 @@ permissions, custom role creation/revocation, score redaction, migration,
 password/session handling and last-admin protection. Pipeline tests cover staging
 without embedding, SQL isolation, atomic rejection, validation, persistence and
 embedding failure, confirmed ADMIN-only index reset and retained staging/chats.
+Multi-role tests verify permission union, immediate revocation, last-admin
+protection, secondary-role deletion safeguards, atomic invalid assignments,
+alphanumeric and case-insensitive usernames, numeric username/phone selection,
+and deterministic username migration without losing accounts. The dedicated
+`tests/test_multirole_ui.cjs` browser regression creates users with multiple roles,
+edits assignments and usernames, and signs in with the changed username.
+Role-switching tests verify session persistence, independent sessions,
+unassigned-role rejection, switching back from a role without permissions,
+stale-tab guards, active-role removal fallback, and ADMIN-only operations.
+`tests/test_role_switch_ui.cjs` verifies the visible username, role selector,
+controls and API access after switches, persistence on reload, and mobile layout.
+Panel checks verify edge handles remain usable after collapse, directional arrows,
+all side-panel visibility combinations with chat always visible, the username at the top of the left panel, and
+sign-out within Settings. Settings checks cover the account summary, grouped
+workspace/access options, hidden groups for restricted roles and the session
+footer; desktop and mobile previews were visually inspected.
 Password recovery tests cover normalized email/phone sign-in, console delivery,
 generic responses, expiration, resend, attempt limits, rate limits, single-use
 grants, password confirmation and session revocation. Seeding tests verify
@@ -85,7 +101,7 @@ against `tests/ui_server.py`, which uses fake inference and temporary storage.
 It verifies password sign-in, user creation, account isolation, permissions in
 Settings, custom roles, pipeline staging/SQL/embedding, feedback persistence,
 scorecard/feedback hiding for restricted roles, saved chat restoration/continuation,
-citation reopening, interrupted query persistence, and all eight pane visibility
+citation reopening, interrupted query persistence, and all four side-panel visibility
 combinations at 1440, 1000, 850, and 390 pixels without horizontal overflow.
 Pane visibility and the active conversation survive reloads. Desktop and phone
 screenshots were also inspected. These checks exercise the actual UI and API;

@@ -2,6 +2,7 @@
 import hashlib
 import hmac
 import json
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
@@ -43,6 +44,9 @@ class Access:
                     UNIQUE(message_id, user_id));
             ''')
             db.execute('BEGIN IMMEDIATE')
+            session_columns = {row['name'] for row in db.execute('PRAGMA table_info(sessions)')}
+            if 'active_role' not in session_columns:
+                db.execute('ALTER TABLE sessions ADD COLUMN active_role TEXT')
             columns = {row['name'] for row in db.execute('PRAGMA table_info(profiles)')}
             migrating = 'role' not in columns
             if migrating:
@@ -59,11 +63,68 @@ class Access:
                     db.executemany('INSERT INTO role_permissions VALUES (?, ?)', [(role, p) for p in permissions])
             if migrating:
                 db.execute("UPDATE profiles SET role = 'ADMIN' WHERE rowid = (SELECT MIN(rowid) FROM profiles)")
+            if 'username' not in columns:
+                db.execute('ALTER TABLE profiles ADD COLUMN username TEXT COLLATE NOCASE')
+            for row in db.execute('SELECT id,name FROM profiles WHERE username IS NULL ORDER BY rowid').fetchall():
+                db.execute('UPDATE profiles SET username=? WHERE id=?', (self.available_username(db, row['name']), row['id']))
+            db.execute('CREATE UNIQUE INDEX IF NOT EXISTS profiles_username ON profiles(username COLLATE NOCASE)')
+            db.execute("""CREATE TABLE IF NOT EXISTS profile_roles (
+                profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+                role TEXT NOT NULL REFERENCES roles(name), PRIMARY KEY(profile_id,role))""")
+            db.execute("""INSERT INTO profile_roles SELECT id,role FROM profiles
+                WHERE NOT EXISTS (SELECT 1 FROM profile_roles WHERE profile_id=profiles.id)""")
+            feedback_columns = {row['name'] for row in db.execute('PRAGMA table_info(response_feedback)')}
+            if 'roles' not in feedback_columns:
+                db.execute('ALTER TABLE response_feedback ADD COLUMN roles TEXT')
+                for row in db.execute('SELECT id,role FROM response_feedback').fetchall():
+                    db.execute('UPDATE response_feedback SET roles=? WHERE id=?', (json.dumps([row['role']]),row['id']))
+
+
+    @staticmethod
+    def membership(db, user_id):
+        return [r[0] for r in db.execute('SELECT role FROM profile_roles WHERE profile_id=? ORDER BY role', (user_id,))]
+
+    @staticmethod
+    def available_username(db, name):
+        base = re.sub(r'[^A-Za-z0-9]', '', name)[:70] or 'User'
+        candidate = base
+        counter = 1
+        while db.execute('SELECT 1 FROM profiles WHERE username=?', (candidate,)).fetchone():
+            counter += 1
+            candidate = base + str(counter)
+        return candidate
+
+    @staticmethod
+    def validate_username(username):
+        if not isinstance(username, str) or not re.fullmatch(r'[A-Za-z0-9]{1,80}', username):
+            raise ValueError('Username must contain 1–80 letters or numbers only')
+        return username
+
+    @staticmethod
+    def assign_roles(db, user_id, roles):
+        if not roles or len(roles) > 50:
+            raise ValueError('Assign between 1 and 50 roles')
+        canonical = []
+        for name in roles:
+            row = db.execute('SELECT name FROM roles WHERE name=?', (name,)).fetchone()
+            if not row:
+                raise ValueError('Unknown role: ' + name)
+            if row['name'] in canonical:
+                raise ValueError('Roles must be unique')
+            canonical.append(row['name'])
+        db.execute('DELETE FROM profile_roles WHERE profile_id=?', (user_id,))
+        db.executemany('INSERT INTO profile_roles VALUES (?,?)', [(user_id, role) for role in canonical])
+        # Keep the original field for older API clients; membership drives authorization.
+        db.execute('UPDATE profiles SET role=? WHERE id=?', ('ADMIN' if 'ADMIN' in canonical else canonical[0], user_id))
 
     @staticmethod
     def public_user(db, row):
-        return {key: row[key] for key in ('id', 'name', 'role', 'active', 'email', 'phone')} | {
-            'permissions': [r[0] for r in db.execute('SELECT permission FROM role_permissions WHERE role = ?', (row['role'],))]}
+        roles = Access.membership(db, row['id'])
+        permissions = [r[0] for r in db.execute("""SELECT DISTINCT permission FROM role_permissions
+            JOIN profile_roles ON profile_roles.role=role_permissions.role
+            WHERE profile_id=? ORDER BY permission""", (row['id'],))]
+        return {key: row[key] for key in ('id', 'name', 'username', 'role', 'active', 'email', 'phone')} | {
+            'roles': roles, 'permissions': permissions}
 
     def setup_required(self):
         with self.history.connect() as db:
@@ -83,9 +144,14 @@ class Access:
                 user_id = str(uuid4())
                 db.execute('INSERT INTO profiles (id,name,name_key,role,password_hash) VALUES (?,?,?,?,?)',
                            (user_id, name, name.casefold(), 'ADMIN', encoded))
+            if not self.membership(db, user_id):
+                self.assign_roles(db, user_id, ['ADMIN'])
+            row = db.execute('SELECT * FROM profiles WHERE id=?', (user_id,)).fetchone()
+            if not row['username']:
+                db.execute('UPDATE profiles SET username=? WHERE id=?', (self.available_username(db, row['name']), user_id))
             return self.public_user(db, db.execute('SELECT * FROM profiles WHERE id = ?', (user_id,)).fetchone())
 
-    def login(self, name, password, country='NZ'):
+    def login(self, name, password, country='NZ', identifier_type=None):
         name = name.strip()
         email = None
         phone = None
@@ -97,7 +163,14 @@ class Access:
         except ValueError:
             pass
         with self.history.connect() as db:
-            row = db.execute('SELECT * FROM profiles WHERE name_key = ? OR email = ? OR phone = ? ORDER BY CASE WHEN name_key = ? THEN 0 ELSE 1 END LIMIT 1', (name.casefold(), email, phone, name.casefold())).fetchone()
+            if identifier_type == 'phone':
+                row = db.execute('SELECT * FROM profiles WHERE phone=?', (phone,)).fetchone()
+            else:
+                row = db.execute('SELECT * FROM profiles WHERE username=?', (name,)).fetchone()
+                if not row:
+                    row = db.execute('SELECT * FROM profiles WHERE email=?', (email,)).fetchone()
+                if not row and identifier_type is None:
+                    row = db.execute('SELECT * FROM profiles WHERE phone=?', (phone,)).fetchone()
             # Equal cost for unknown accounts.
             encoded = row['password_hash'] if row and row['password_hash'] else self.dummy_hash
             valid = password_matches(password, encoded)
@@ -109,16 +182,40 @@ class Access:
         token = secrets.token_urlsafe(32)
         with self.history.connect() as db:
             db.execute('DELETE FROM sessions WHERE expires_at <= ?', (datetime.now(timezone.utc).isoformat(),))
-            db.execute('INSERT INTO sessions VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), user_id,
-                       (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()))
+            row = db.execute('SELECT role FROM profiles WHERE id=?', (user_id,)).fetchone()
+            db.execute('INSERT INTO sessions (token_hash,profile_id,expires_at,active_role) VALUES (?,?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), user_id,
+                       (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(), row['role']))
         return token
 
     def current(self, token):
         with self.history.connect() as db:
-            row = db.execute('''SELECT profiles.* FROM profiles JOIN sessions ON profiles.id = sessions.profile_id
-                WHERE token_hash = ? AND expires_at > ? AND active = 1''',
+            row = db.execute("""SELECT profiles.*,sessions.active_role FROM profiles JOIN sessions ON profiles.id = sessions.profile_id
+                WHERE token_hash = ? AND expires_at > ? AND active = 1""",
                 (hashlib.sha256(token.encode()).hexdigest(), datetime.now(timezone.utc).isoformat())).fetchone()
-            return self.public_user(db, row) if row else None
+            if not row:
+                return None
+            user = self.public_user(db, row)
+            selected = row['active_role']
+            if selected not in user['roles']:
+                selected = user['role'] if user['role'] in user['roles'] else user['roles'][0]
+                db.execute('UPDATE sessions SET active_role=? WHERE token_hash=?', (selected, hashlib.sha256(token.encode()).hexdigest()))
+            user['active_role'] = selected
+            user['role'] = selected
+            user['permissions'] = [r[0] for r in db.execute('SELECT permission FROM role_permissions WHERE role=? ORDER BY permission', (selected,))]
+            return user
+
+    def switch_role(self, token, role):
+        with self.history.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            session = db.execute("""SELECT sessions.profile_id FROM sessions JOIN profiles ON profiles.id=profile_id
+                WHERE token_hash=? AND expires_at>? AND active=1""", (hashlib.sha256(token.encode()).hexdigest(), datetime.now(timezone.utc).isoformat())).fetchone()
+            if not session:
+                raise PermissionError('Sign in first')
+            assigned = db.execute('SELECT role FROM profile_roles WHERE profile_id=? AND role=? COLLATE NOCASE', (session['profile_id'],role)).fetchone()
+            if not assigned:
+                raise PermissionError('This role is not assigned to your account')
+            db.execute('UPDATE sessions SET active_role=? WHERE token_hash=?', (assigned['role'],hashlib.sha256(token.encode()).hexdigest()))
+        return self.current(token)
 
     def logout(self, token):
         with self.history.connect() as db:
@@ -128,24 +225,25 @@ class Access:
         with self.history.connect() as db:
             return [self.public_user(db, row) for row in db.execute('SELECT * FROM profiles ORDER BY name_key')]
 
-    def create_user(self, name, password, role, email=None, phone=None, country='NZ'):
+    def create_user(self, name, password, role='USER', email=None, phone=None, country='NZ', roles=None, username=None):
         email = normalize_email(email)
         phone = normalize_phone(phone, country)
         encoded = password_hash(password)
         with self.history.connect() as db:
-            role_row = db.execute('SELECT name FROM roles WHERE name = ?', (role,)).fetchone()
-            if not role_row:
-                raise ValueError('Unknown role')
-            role = role_row['name']
+            db.execute('BEGIN IMMEDIATE')
+            username = self.validate_username(username) if username is not None else self.available_username(db, name)
             user_id = str(uuid4())
-            db.execute('INSERT INTO profiles (id,name,name_key,role,password_hash,email,phone) VALUES (?,?,?,?,?,?,?)',
-                       (user_id, name, name.casefold(), role, encoded, email, phone))
+            db.execute('INSERT INTO profiles (id,name,name_key,role,password_hash,email,phone,username) VALUES (?,?,?,?,?,?,?,?)',
+                       (user_id, name, name.casefold(), 'USER', encoded, email, phone, username))
+            self.assign_roles(db, user_id, roles if roles is not None else [role])
             return self.public_user(db, db.execute('SELECT * FROM profiles WHERE id = ?', (user_id,)).fetchone())
 
     @staticmethod
     def protect_admin(db):
-        if not db.execute('''SELECT 1 FROM profiles JOIN role_permissions ON profiles.role = role_permissions.role
-            WHERE active = 1 AND profiles.role = 'ADMIN' AND permission = 'roles:manage' ''').fetchone():
+        if not db.execute("""SELECT 1 FROM profiles WHERE active=1
+            AND EXISTS (SELECT 1 FROM profile_roles WHERE profile_id=profiles.id AND role='ADMIN')
+            AND EXISTS (SELECT 1 FROM profile_roles JOIN role_permissions ON profile_roles.role=role_permissions.role
+                WHERE profile_id=profiles.id AND permission='roles:manage')""").fetchone():
             raise ValueError('Keep at least one active ADMIN with roles:manage')
 
     def update_user(self, user_id, changes):
@@ -162,13 +260,16 @@ class Access:
             db.execute('BEGIN IMMEDIATE')
             if not db.execute('SELECT 1 FROM profiles WHERE id = ?', (user_id,)).fetchone():
                 raise KeyError('User not found')
-            if 'role' in changes:
-                role_row = db.execute('SELECT name FROM roles WHERE name = ?', (changes['role'],)).fetchone()
-                if not role_row:
-                    raise ValueError('Unknown role')
-                changes = dict(changes, role=role_row['name'])
+            if 'role' in changes and 'roles' in changes:
+                raise ValueError('Supply roles or the legacy role field, not both')
+            if 'roles' in changes:
+                self.assign_roles(db, user_id, changes.pop('roles'))
+            elif 'role' in changes:
+                self.assign_roles(db, user_id, [changes.pop('role')])
+            if 'username' in changes:
+                changes['username'] = self.validate_username(changes['username'])
             for key, value in changes.items():
-                if key not in ('role', 'active', 'password_hash', 'email', 'phone'):
+                if key not in ('active', 'password_hash', 'email', 'phone', 'username'):
                     raise ValueError('Unknown user field')
                 db.execute(f'UPDATE profiles SET {key} = ? WHERE id = ?', (value, user_id))
             self.protect_admin(db)
@@ -185,13 +286,13 @@ class Access:
             db.execute('BEGIN IMMEDIATE')
             actor = db.execute('SELECT * FROM profiles WHERE id = ? AND active = 1', (actor_id,)).fetchone()
             target = db.execute('SELECT * FROM profiles WHERE id = ?', (user_id,)).fetchone()
-            if not actor or actor['role'] != 'ADMIN':
+            if not actor or 'ADMIN' not in self.membership(db, actor_id):
                 raise PermissionError('Only ADMIN can remove users')
             if not target:
                 raise KeyError('User not found')
             actor_permissions = set(self.public_user(db, actor)['permissions'])
             target_permissions = set(self.public_user(db, target)['permissions'])
-            if user_id == actor_id or target['role'] == 'ADMIN' or not target_permissions < actor_permissions:
+            if user_id == actor_id or 'ADMIN' in self.membership(db, user_id) or not target_permissions < actor_permissions:
                 raise PermissionError('Only users with strictly lower privileges can be removed')
             db.execute('DELETE FROM sessions WHERE profile_id = ?', (user_id,))
             db.execute('DELETE FROM chats WHERE profile_id = ?', (user_id,))
@@ -225,17 +326,23 @@ class Access:
             raise ValueError('Default roles cannot be deleted')
         with self.history.connect() as db:
             db.execute('BEGIN IMMEDIATE')
-            if db.execute('SELECT 1 FROM profiles WHERE role = ? COLLATE NOCASE', (name,)).fetchone():
+            if db.execute('SELECT 1 FROM profile_roles WHERE role = ? COLLATE NOCASE', (name,)).fetchone():
                 raise ValueError('Reassign users before deleting this role')
             if not db.execute('DELETE FROM roles WHERE name = ?', (name,)).rowcount:
                 raise KeyError('Role not found')
 
     def saved_feedback(self, user_id, chat_id):
         with self.history.connect() as db:
-            return {row['message_id']: dict(row) for row in db.execute(
+            return {row['message_id']: self.public_feedback(row) for row in db.execute(
                 """SELECT response_feedback.* FROM response_feedback JOIN turns
                 ON turns.id = response_feedback.message_id WHERE turns.chat_id = ? AND user_id = ?""",
                 (chat_id, user_id))}
+
+    @staticmethod
+    def public_feedback(row):
+        result = dict(row)
+        result['roles'] = json.loads(result['roles']) if result.get('roles') else [result['role']]
+        return result
 
     def feedback(self, user, message_id, rating, comment):
         with self.history.connect() as db:
@@ -246,9 +353,9 @@ class Access:
             if json.loads(row['payload']).get('status') != 'complete':
                 raise ValueError('Feedback is available only for completed responses')
             feedback = dict(id=str(uuid4()), message_id=message_id, user_id=user['id'], role=user['role'],
-                            rating=rating, comment=comment, timestamp=datetime.now(timezone.utc).isoformat())
-            db.execute('''INSERT INTO response_feedback VALUES (:id,:message_id,:user_id,:role,:rating,:comment,:timestamp)
+                            rating=rating, comment=comment, timestamp=datetime.now(timezone.utc).isoformat(), roles=json.dumps(user['roles']))
+            db.execute('''INSERT INTO response_feedback (id,message_id,user_id,role,rating,comment,timestamp,roles) VALUES (:id,:message_id,:user_id,:role,:rating,:comment,:timestamp,:roles)
                 ON CONFLICT(message_id,user_id) DO UPDATE SET role=excluded.role, rating=excluded.rating,
-                comment=excluded.comment, timestamp=excluded.timestamp''', feedback)
-            return dict(db.execute('SELECT * FROM response_feedback WHERE message_id = ? AND user_id = ?',
+                comment=excluded.comment, timestamp=excluded.timestamp, roles=excluded.roles''', feedback)
+            return self.public_feedback(db.execute('SELECT * FROM response_feedback WHERE message_id = ? AND user_id = ?',
                                    (message_id, user['id'])).fetchone())
