@@ -1,4 +1,4 @@
-# Pizza Feedback RAG Tutorial
+# Pizza Feedback RAG Application
 
 This project implements a local retrieval-augmented generation pipeline for pizza feedback data, with evaluation tooling built around Ollama and Ragas.
 
