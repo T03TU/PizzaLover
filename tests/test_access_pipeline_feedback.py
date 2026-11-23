@@ -34,6 +34,62 @@ class FeatureTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         return response.headers['X-Chat-ID'], response.headers['X-Turn-ID']
 
+    def test_admin_removes_lower_user_and_revokes_access(self):
+        user = self.create_user()
+        self.login()
+        token = self.client.cookies.get('pizzalover_session')
+        chat_id, turn_id = self.ask()
+        self.client.post('/api/feedback', json={'message_id': turn_id, 'rating': 'thumbs_up'})
+        self.login('Admin', 'admin-password-123')
+        self.assertEqual(self.client.delete(f"/api/users/{user['id']}").status_code, 204)
+        with app.state.chat_history.connect() as db:
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM profiles WHERE id=?', (user['id'],)).fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM chats WHERE id=?', (chat_id,)).fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM turns').fetchone()[0], 0)
+            self.assertEqual(db.execute('SELECT COUNT(*) FROM response_feedback').fetchone()[0], 1)
+        self.assertIsNone(app.state.access.current(token))
+        self.assertEqual(self.client.post('/api/auth/login', json={'name': 'Reader', 'password': PASSWORD}).status_code, 401)
+
+    def test_user_removal_rejects_self_peers_and_non_admin(self):
+        actor = self.client.get('/api/profiles').json()['current']
+        other = self.create_user('ADMIN')
+        self.assertEqual(self.client.delete(f"/api/users/{actor['id']}").status_code, 403)
+        self.assertEqual(self.client.delete(f"/api/users/{other['id']}").status_code, 403)
+        self.client.post('/api/roles', json={'name': 'FULL_ACCESS', 'permissions': list(PERMISSIONS)})
+        equal = self.create_user('FULL_ACCESS', 'Equal')
+        lower = self.create_user('USER', 'Lower')
+        self.assertEqual(self.client.delete(f"/api/users/{equal['id']}").status_code, 403)
+        self.login('Equal')
+        self.assertEqual(self.client.delete(f"/api/users/{lower['id']}").status_code, 403)
+        self.login('Lower')
+        self.assertEqual(self.client.delete(f"/api/users/{other['id']}").status_code, 403)
+
+    def test_admin_knowledge_reset_preserves_staging_and_chats(self):
+        chat_id, turn_id = self.ask()
+        self.client.post('/api/pipeline/stage', json=dict(web.REVIEW, Feedback_ID='FB-STAGED'))
+        self.assertEqual(self.client.post('/api/pipeline/reset', json={'confirmation': 'wrong'}).status_code, 422)
+        self.assertEqual(self.client.post('/api/pipeline/reset', json={'confirmation': 'RESET KNOWLEDGE BANK'}).status_code, 422)
+        self.assertEqual(len(self.store.rows), 1)
+        response = self.client.post('/api/pipeline/reset', json={'confirmation': 'CONFIRM'})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {'removed': 1})
+        self.assertEqual(self.client.get('/api/metadata/options').json()['total_documents'], 0)
+        self.assertEqual(self.client.get(f'/api/chats/{chat_id}').json()['turns'][0]['id'], turn_id)
+        self.assertEqual(len(self.client.get('/api/pipeline').json()['rows']), 1)
+        self.assertEqual(self.client.post('/api/pipeline/reset', json={'confirmation': 'CONFIRM'}).json(), {'removed': 0})
+        self.assertEqual(self.client.post('/api/pipeline/embed').json(), {'added': 1})
+
+    def test_reset_requires_admin_and_handles_storage_failure(self):
+        self.client.post('/api/roles', json={'name': 'PIPELINE', 'permissions': ['pipeline:manage']})
+        self.create_user('PIPELINE')
+        self.login()
+        self.assertEqual(self.client.post('/api/pipeline/reset', json={'confirmation': 'CONFIRM'}).status_code, 403)
+        self.login('Admin', 'admin-password-123')
+        def fail(ids):
+            raise RuntimeError('Storage unavailable')
+        self.store.delete = fail
+        self.assertEqual(self.client.post('/api/pipeline/reset', json={'confirmation': 'CONFIRM'}).status_code, 503)
+
     def test_default_roles_and_api_denials(self):
         roles = self.client.get('/api/roles').json()
         self.assertEqual(set(roles['permissions']), set(PERMISSIONS))

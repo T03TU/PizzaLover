@@ -36,6 +36,7 @@ function can(permission) { return !!currentProfile?.permissions.includes(permiss
 function applyPermissions() {
   document.querySelectorAll('[data-permission]').forEach(el => { el.hidden = !can(el.dataset.permission); });
   $('add-profile').hidden = !can('users:create');
+  $('reset-knowledge').hidden = currentProfile?.role !== 'ADMIN' || !can('pipeline:manage');
   $('account-summary').textContent = currentProfile ? `${currentProfile.name} · ${currentProfile.role}` : '';
   $('question').disabled = !can('chat:use');
   $('eval').disabled = !can('scorecards:view');
@@ -238,14 +239,23 @@ function renderFeedback(turn) {
       buttons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.rating === rating)));
     }); buttons.push(button); box.append(button);
   }
-  form.append(comment, submit);
+  const cancel = node('button', 'Cancel', 'secondary'); cancel.type = 'button';
+  cancel.addEventListener('click', () => {
+    rating = turn.feedback?.rating;
+    comment.value = turn.feedback?.comment || '';
+    buttons.forEach(button => button.setAttribute('aria-pressed', String(button.dataset.rating === rating)));
+    form.hidden = true;
+    status.textContent = turn.feedback ? 'Feedback saved. Select a rating to update it.' : '';
+  });
+  form.append(comment, submit, cancel);
   form.addEventListener('submit', async event => {
-    event.preventDefault(); submit.disabled = true;
+    event.preventDefault(); submit.disabled = true; cancel.disabled = true;
+    buttons.forEach(button => { button.disabled = true; });
     try {
       turn.feedback = await (await api('/api/feedback', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({message_id:turn.id, rating, comment:comment.value})})).json();
       status.textContent = 'Feedback saved. Thank you.'; form.hidden = true;
     } catch (error) { status.textContent = error.message; }
-    finally { submit.disabled = false; }
+    finally { submit.disabled = false; cancel.disabled = false; buttons.forEach(button => { button.disabled = false; }); }
   });
   box.append(form, status); turn.assistant.append(box);
 }
@@ -379,7 +389,7 @@ $('profile-form').addEventListener('submit', async event => {
   if (!name || historyBusy || activeController) return;
   historyBusy = true; updateNavigation(); $('profile-create').disabled = true;
   try {
-    await api('/api/profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, password:$('profile-password').value, role:$('profile-role').value})});
+    await api('/api/profiles', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name, password:$('profile-password').value, role:$('profile-role').value, email:$('profile-email').value, phone:$('profile-phone').value, country:$('profile-country').value})});
     $('profile-dialog').close();
     if ($('users-dialog').open) await loadUsers();
   } catch (error) { $('profile-error').textContent = error.message; }
@@ -464,15 +474,22 @@ renderScores(null);
 applyPermissions();
 
 async function startAccount() {
-  await loadProfiles(); await restoreProfileChat();
-  await Promise.all([loadMetadata(), refreshSummary()]);
-  historyBusy = false; updateNavigation();
+  await loadProfiles();
+  try {
+    await restoreProfileChat();
+    const results = await Promise.allSettled([loadMetadata(), refreshSummary()]);
+    results.forEach(result => { if (result.status === 'rejected') showError(result.reason.message); });
+  } catch (error) { showError(error.message); }
+  finally { historyBusy = false; updateNavigation(); }
 }
 let setupRequired = false;
 (async () => {
   try {
     const status = await (await api('/api/auth/status')).json();
     setupRequired = status.setup_required;
+    await loadRecoveryOptions();
+    $('auth-method-fields').hidden = setupRequired;
+    $('forgot-password').hidden = setupRequired;
     if (!setupRequired) {
       const response = await fetch('/api/profiles');
       if (response.ok) { await startAccount(); return; }
@@ -481,7 +498,7 @@ let setupRequired = false;
     $('setup-token').required = setupRequired;
     $('auth-password').minLength = setupRequired ? 12 : 1;
     $('auth-title').textContent = setupRequired ? 'Set up administrator' : 'Sign in';
-    $('auth-help').textContent = setupRequired ? 'Use the setup token printed in the server console and choose a password of at least 12 characters. Existing installations keep the oldest profile as administrator.' : 'Use your account name and password.';
+    $('auth-help').textContent = setupRequired ? 'Use the setup token printed in the server console and choose a password of at least 12 characters. Existing installations keep the oldest profile as administrator.' : 'Use your account name, email or phone number and password.';
     $('auth-dialog').showModal();
   } catch (error) { showError(error.message); }
 })();
@@ -490,7 +507,7 @@ $('auth-form').addEventListener('submit', async event => {
   event.preventDefault();
   const button = event.submitter; button.disabled = true;
   try {
-    const body = {name:$('auth-name').value.trim(), password:$('auth-password').value};
+    const body = {name:$('auth-name').value.trim(), password:$('auth-password').value, country:$('auth-country').value};
     if (setupRequired) body.token = $('setup-token').value.trim();
     await api(setupRequired ? '/api/auth/setup' : '/api/auth/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
     $('auth-password').value = ''; $('setup-token').value = '';
@@ -531,11 +548,11 @@ let pipelineBusy = false;
 async function pipelineAction(action) {
   if (pipelineBusy) return;
   pipelineBusy = true;
-  for (const id of ['run-sql', 'stage-upload', 'embed-staged']) $(id).disabled = true;
+  for (const id of ['run-sql', 'stage-upload', 'embed-staged', 'reset-knowledge']) $(id).disabled = true;
   $('pipeline-status').textContent = 'Working…';
   try { await action(); }
   catch (error) { $('pipeline-status').textContent = error.message; }
-  finally { pipelineBusy = false; for (const id of ['run-sql', 'stage-upload', 'embed-staged']) $(id).disabled = false; }
+  finally { pipelineBusy = false; for (const id of ['run-sql', 'stage-upload', 'embed-staged', 'reset-knowledge']) $(id).disabled = false; }
 }
 $('open-pipeline').addEventListener('click', () => {
   $('pipeline-dialog').showModal();
@@ -623,12 +640,17 @@ async function loadUsers() {
       const password = node('input'); password.type = 'password'; password.minLength = 12; password.maxLength = 256;
       password.autocomplete = 'new-password'; password.placeholder = 'New password (optional, at least 12 characters)';
       password.setAttribute('aria-label', `New password for ${user.name}`);
+      const email = node('input'); email.type = 'email'; email.maxLength = 254; email.value = user.email || '';
+      email.setAttribute('aria-label', `Recovery email for ${user.name}`); email.placeholder = 'Recovery email';
+      const phone = node('input'); phone.type = 'tel'; phone.maxLength = 80; phone.value = user.phone || '';
+      phone.setAttribute('aria-label', `Recovery phone for ${user.name}`); phone.placeholder = 'Recovery phone';
+      const countryGroup = node('div'); const country = makeCountrySelector(countryGroup, `country-${user.id}`);
       const save = node('button', 'Save user', 'secondary'); save.type = 'submit';
-      form.append(select, label, password, save);
+      form.append(select, label, email, countryGroup, phone, password, save);
       form.addEventListener('submit', async event => {
         event.preventDefault(); save.disabled = true;
         try {
-          const body = {role:select.value, active:active.checked}; if (password.value) body.password = password.value;
+          const body = {role:select.value, active:active.checked, email:email.value, phone:phone.value, country:country.value}; if (password.value) body.password = password.value;
           await api(`/api/users/${user.id}`, {method:'PATCH', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
           if (user.id === currentProfile.id && password.value) { location.reload(); return; }
           await loadProfiles();
@@ -638,6 +660,22 @@ async function loadUsers() {
         finally { save.disabled = false; }
       });
     }
+    const lowerPrivilege = currentProfile.role === 'ADMIN' && user.role !== 'ADMIN' && user.id !== currentProfile.id &&
+      user.permissions.length < currentProfile.permissions.length && user.permissions.every(permission => can(permission));
+    if (lowerPrivilege) {
+      const remove = node('button', 'Remove user', 'secondary'); remove.type = 'button';
+      remove.setAttribute('aria-label', `Remove user ${user.name}`);
+      remove.addEventListener('click', async () => {
+        if (!confirm(`Remove ${user.name}? Their account and saved chats will be permanently deleted.`)) return;
+        remove.disabled = true;
+        try {
+          await api(`/api/users/${user.id}`, {method:'DELETE'});
+          await loadUsers(); $('users-status').textContent = 'User removed.';
+        } catch (error) { $('users-status').textContent = error.message; }
+        finally { remove.disabled = false; }
+      });
+      form.append(remove);
+    }
     $('users-list').append(form);
   }
 }
@@ -645,3 +683,117 @@ $('open-users').addEventListener('click', async () => {
   $('users-status').textContent = ''; $('users-dialog').showModal();
   try { await loadUsers(); } catch (error) { $('users-status').textContent = error.message; }
 });
+
+$('reset-knowledge').addEventListener('click', () => {
+  if (pipelineBusy) return;
+  $('reset-knowledge-form').reset(); $('reset-confirm').disabled = true;
+  $('reset-dialog-status').textContent = ''; $('reset-knowledge-dialog').showModal();
+});
+$('reset-confirmation').addEventListener('input', () => {
+  $('reset-confirm').disabled = $('reset-confirmation').value !== 'CONFIRM' || pipelineBusy;
+});
+$('reset-cancel').addEventListener('click', () => $('reset-knowledge-dialog').close());
+$('reset-knowledge-dialog').addEventListener('cancel', event => { if (pipelineBusy) event.preventDefault(); });
+$('reset-knowledge-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const confirmation = $('reset-confirmation').value;
+  if (pipelineBusy || confirmation !== 'CONFIRM') return;
+  pipelineBusy = true;
+  for (const id of ['run-sql', 'stage-upload', 'embed-staged', 'reset-knowledge', 'reset-confirm', 'reset-cancel', 'reset-confirmation']) $(id).disabled = true;
+  $('reset-dialog-status').textContent = 'Removing all embedded reviews…';
+  try {
+    const result = await (await api('/api/pipeline/reset', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({confirmation})})).json();
+    $('reset-status').textContent = `${result.removed} embedded reviews removed. Knowledge bank is empty.`;
+    clearConversation(); rememberChat();
+    $('chat-status').textContent = 'Knowledge bank is empty. Stage and embed new reviews to chat.';
+    await Promise.all([loadMetadata(), refreshHistory()]);
+    $('reset-knowledge-dialog').close();
+  } catch (error) { $('reset-dialog-status').textContent = error.message; }
+  finally {
+    pipelineBusy = false;
+    for (const id of ['run-sql', 'stage-upload', 'embed-staged', 'reset-knowledge', 'reset-cancel', 'reset-confirmation']) $(id).disabled = false;
+    $('reset-confirm').disabled = $('reset-confirmation').value !== 'CONFIRM';
+  }
+});
+
+let recoveryOptions = null;
+function makeCountrySelector(container, id) {
+  const searchLabel = node('label', 'Search country or dial code'); searchLabel.htmlFor = `${id}-search`;
+  const search = node('input'); search.id = `${id}-search`; search.type = 'search'; search.placeholder = 'e.g. New Zealand, NZ, +64';
+  const label = node('label', 'Country / calling code'); label.htmlFor = id;
+  const select = node('select'); select.id = id;
+  const names = new Intl.DisplayNames(['en'], {type:'region'});
+  const entries = (recoveryOptions?.countries || []).map(country => ({...country, text:`${names.of(country.iso)} (${country.iso}) ${country.dial_code}`})).sort((a, b) => a.text.localeCompare(b.text));
+  let chosen = 'NZ';
+  function populate() {
+    const query = search.value.trim().toLowerCase();
+    select.replaceChildren(...entries.filter(entry => entry.text.toLowerCase().includes(query)).map(entry => new Option(entry.text, entry.iso, entry.iso === chosen, entry.iso === chosen)));
+    if ([...select.options].some(option => option.value === chosen)) select.value = chosen;
+    else if (select.options.length) select.selectedIndex = 0;
+  }
+  select.addEventListener('change', () => { chosen = select.value; });
+  search.addEventListener('input', populate); populate();
+  container.replaceChildren(searchLabel, search, label, select);
+  return select;
+}
+async function loadRecoveryOptions() {
+  recoveryOptions = await (await api('/api/auth/recovery/options')).json();
+  makeCountrySelector($('auth-country-fields'), 'auth-country');
+  makeCountrySelector($('recovery-country-fields'), 'recovery-country');
+  makeCountrySelector($('profile-country-fields'), 'profile-country');
+  updateRecoveryChannel();
+}
+$('auth-method').addEventListener('change', () => {
+  const phone = $('auth-method').value === 'phone';
+  $('auth-country-fields').hidden = !phone;
+  $('auth-name-label').textContent = phone ? 'Phone number' : 'Account name or email';
+  $('auth-name').type = phone ? 'tel' : 'text';
+});
+let recoveryRequestId = null;
+let recoveryToken = null;
+function recoveryStep(step) {
+  for (const name of ['request', 'verify', 'password']) $(`recovery-${name}-form`).hidden = name !== step;
+  $('recovery-error').textContent = '';
+}
+function updateRecoveryChannel() {
+  const phone = $('recovery-channel').value === 'phone';
+  $('recovery-country-fields').hidden = !phone;
+  $('recovery-identifier-label').textContent = phone ? 'Phone number' : 'Email address';
+  $('recovery-identifier').type = phone ? 'tel' : 'email';
+  $('recovery-identifier').autocomplete = phone ? 'tel-national' : 'email';
+  $('recovery-dev').hidden = recoveryOptions?.delivery[$('recovery-channel').value] !== 'console';
+}
+$('recovery-channel').addEventListener('change', () => { $('recovery-identifier').value = ''; updateRecoveryChannel(); });
+$('forgot-password').addEventListener('click', () => {
+  recoveryRequestId = null; recoveryToken = null;
+  for (const name of ['request', 'verify', 'password']) $(`recovery-${name}-form`).reset();
+  recoveryStep('request'); updateRecoveryChannel(); $('recovery-dialog').showModal();
+});
+function clearRecovery() {
+  recoveryToken = null; recoveryRequestId = null;
+  $('recovery-code').value = ''; $('recovery-password').value = ''; $('recovery-confirm-password').value = '';
+}
+$('recovery-dialog').addEventListener('close', clearRecovery);
+$('recovery-cancel').addEventListener('click', () => $('recovery-dialog').close());
+$('recovery-resend').addEventListener('click', () => { clearRecovery(); recoveryStep('request'); });
+async function recoveryAction(event, action) {
+  event.preventDefault(); const button = event.submitter; button.disabled = true;
+  $('recovery-error').textContent = '';
+  try { await action(); }
+  catch (error) { $('recovery-error').textContent = error.message; }
+  finally { button.disabled = false; }
+}
+$('recovery-request-form').addEventListener('submit', event => recoveryAction(event, async () => {
+  const result = await (await api('/api/auth/recovery/request', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({channel:$('recovery-channel').value, identifier:$('recovery-identifier').value.trim(), country:$('recovery-country').value})})).json();
+  recoveryRequestId = result.request_id; recoveryStep('verify'); $('recovery-confirmation').textContent = result.message;
+}));
+$('recovery-verify-form').addEventListener('submit', event => recoveryAction(event, async () => {
+  const result = await (await api('/api/auth/recovery/verify', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({request_id:recoveryRequestId, code:$('recovery-code').value})})).json();
+  recoveryToken = result.reset_token; $('recovery-code').value = ''; recoveryStep('password');
+}));
+$('recovery-password-form').addEventListener('submit', event => recoveryAction(event, async () => {
+  if ($('recovery-password').value !== $('recovery-confirm-password').value) throw new Error('Passwords do not match.');
+  const result = await (await api('/api/auth/recovery/complete', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reset_token:recoveryToken, password:$('recovery-password').value, confirm_password:$('recovery-confirm-password').value})})).json();
+  $('recovery-dialog').close(); $('auth-password').value = ''; $('auth-error').textContent = '';
+  $('auth-notice').textContent = result.message; $('auth-password').focus();
+}));

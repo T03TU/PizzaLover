@@ -5,6 +5,7 @@ import json
 import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from src.contacts import normalize_email, normalize_phone
 
 PERMISSIONS = ('chat:use', 'scorecards:view', 'feedback:submit', 'users:create',
                'pipeline:manage', 'roles:manage')
@@ -48,6 +49,10 @@ class Access:
                 db.execute("ALTER TABLE profiles ADD COLUMN role TEXT NOT NULL DEFAULT 'USER'")
                 db.execute('ALTER TABLE profiles ADD COLUMN password_hash TEXT')
                 db.execute('ALTER TABLE profiles ADD COLUMN active INTEGER NOT NULL DEFAULT 1')
+            for column in ('email', 'phone'):
+                if column not in columns:
+                    db.execute(f'ALTER TABLE profiles ADD COLUMN {column} TEXT')
+                db.execute(f'CREATE UNIQUE INDEX IF NOT EXISTS profiles_{column} ON profiles({column}) WHERE {column} IS NOT NULL')
             for role, permissions in [('ADMIN', PERMISSIONS), ('USER', USER_PERMISSIONS)]:
                 if not db.execute('SELECT 1 FROM roles WHERE name = ?', (role,)).fetchone():
                     db.execute('INSERT INTO roles VALUES (?)', (role,))
@@ -57,7 +62,7 @@ class Access:
 
     @staticmethod
     def public_user(db, row):
-        return {key: row[key] for key in ('id', 'name', 'role', 'active')} | {
+        return {key: row[key] for key in ('id', 'name', 'role', 'active', 'email', 'phone')} | {
             'permissions': [r[0] for r in db.execute('SELECT permission FROM role_permissions WHERE role = ?', (row['role'],))]}
 
     def setup_required(self):
@@ -80,9 +85,19 @@ class Access:
                            (user_id, name, name.casefold(), 'ADMIN', encoded))
             return self.public_user(db, db.execute('SELECT * FROM profiles WHERE id = ?', (user_id,)).fetchone())
 
-    def login(self, name, password):
+    def login(self, name, password, country='NZ'):
+        name = name.strip()
+        email = None
+        phone = None
+        try:
+            if '@' in name:
+                email = normalize_email(name)
+            elif name.startswith('+') or any(char.isdigit() for char in name):
+                phone = normalize_phone(name, country)
+        except ValueError:
+            pass
         with self.history.connect() as db:
-            row = db.execute('SELECT * FROM profiles WHERE name_key = ?', (name.casefold(),)).fetchone()
+            row = db.execute('SELECT * FROM profiles WHERE name_key = ? OR email = ? OR phone = ? ORDER BY CASE WHEN name_key = ? THEN 0 ELSE 1 END LIMIT 1', (name.casefold(), email, phone, name.casefold())).fetchone()
             # Equal cost for unknown accounts.
             encoded = row['password_hash'] if row and row['password_hash'] else self.dummy_hash
             valid = password_matches(password, encoded)
@@ -113,7 +128,9 @@ class Access:
         with self.history.connect() as db:
             return [self.public_user(db, row) for row in db.execute('SELECT * FROM profiles ORDER BY name_key')]
 
-    def create_user(self, name, password, role):
+    def create_user(self, name, password, role, email=None, phone=None, country='NZ'):
+        email = normalize_email(email)
+        phone = normalize_phone(phone, country)
         encoded = password_hash(password)
         with self.history.connect() as db:
             role_row = db.execute('SELECT name FROM roles WHERE name = ?', (role,)).fetchone()
@@ -121,8 +138,8 @@ class Access:
                 raise ValueError('Unknown role')
             role = role_row['name']
             user_id = str(uuid4())
-            db.execute('INSERT INTO profiles (id,name,name_key,role,password_hash) VALUES (?,?,?,?,?)',
-                       (user_id, name, name.casefold(), role, encoded))
+            db.execute('INSERT INTO profiles (id,name,name_key,role,password_hash,email,phone) VALUES (?,?,?,?,?,?,?)',
+                       (user_id, name, name.casefold(), role, encoded, email, phone))
             return self.public_user(db, db.execute('SELECT * FROM profiles WHERE id = ?', (user_id,)).fetchone())
 
     @staticmethod
@@ -132,6 +149,12 @@ class Access:
             raise ValueError('Keep at least one active ADMIN with roles:manage')
 
     def update_user(self, user_id, changes):
+        changes = dict(changes)
+        country = changes.pop('country', 'NZ')
+        if 'email' in changes:
+            changes['email'] = normalize_email(changes['email'])
+        if 'phone' in changes:
+            changes['phone'] = normalize_phone(changes['phone'], country)
         if changes.get('password'):
             changes = dict(changes)
             changes['password_hash'] = password_hash(changes.pop('password'))
@@ -145,13 +168,35 @@ class Access:
                     raise ValueError('Unknown role')
                 changes = dict(changes, role=role_row['name'])
             for key, value in changes.items():
-                if key not in ('role', 'active', 'password_hash'):
+                if key not in ('role', 'active', 'password_hash', 'email', 'phone'):
                     raise ValueError('Unknown user field')
                 db.execute(f'UPDATE profiles SET {key} = ? WHERE id = ?', (value, user_id))
             self.protect_admin(db)
             if 'password_hash' in changes or changes.get('active') is False:
                 db.execute('DELETE FROM sessions WHERE profile_id = ?', (user_id,))
+            if 'password_hash' in changes or 'email' in changes or 'phone' in changes or changes.get('active') is False:
+                if db.execute("SELECT 1 FROM sqlite_master WHERE name='password_resets'").fetchone():
+                    db.execute('DELETE FROM password_resets WHERE profile_id=?', (user_id,))
             return self.public_user(db, db.execute('SELECT * FROM profiles WHERE id = ?', (user_id,)).fetchone())
+
+    def remove_user(self, actor_id, user_id):
+        """Remove only strictly lower-privilege accounts; retain feedback audit records."""
+        with self.history.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            actor = db.execute('SELECT * FROM profiles WHERE id = ? AND active = 1', (actor_id,)).fetchone()
+            target = db.execute('SELECT * FROM profiles WHERE id = ?', (user_id,)).fetchone()
+            if not actor or actor['role'] != 'ADMIN':
+                raise PermissionError('Only ADMIN can remove users')
+            if not target:
+                raise KeyError('User not found')
+            actor_permissions = set(self.public_user(db, actor)['permissions'])
+            target_permissions = set(self.public_user(db, target)['permissions'])
+            if user_id == actor_id or target['role'] == 'ADMIN' or not target_permissions < actor_permissions:
+                raise PermissionError('Only users with strictly lower privileges can be removed')
+            db.execute('DELETE FROM sessions WHERE profile_id = ?', (user_id,))
+            db.execute('DELETE FROM chats WHERE profile_id = ?', (user_id,))
+            db.execute('DELETE FROM profiles WHERE id = ?', (user_id,))
+            self.protect_admin(db)
 
     def roles(self):
         with self.history.connect() as db:

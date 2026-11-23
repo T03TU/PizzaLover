@@ -30,7 +30,8 @@ if __name__ == "__main__":
         from src.chat_history import ChatHistory
         from src.access import Access
         access = Access(ChatHistory(config.CHAT_HISTORY_PATH))
-        access.setup(access.setup_token, 'Admin', 'admin-password-123')
+        admin = access.setup(access.setup_token, 'Admin', 'admin-password-123')
+        access.update_user(admin['id'], {'email': 'browser@example.com', 'phone': '0211234567', 'country': 'NZ'})
         chain = BrowserChain()
         server.create_engine = lambda: SimpleNamespace(store=FakeStore(), chain=chain, evaluator=FakeEvaluator(chain))
         uvicorn.run(server.app, host="127.0.0.1", port=8765, log_level="warning")

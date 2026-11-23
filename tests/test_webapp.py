@@ -32,6 +32,9 @@ class FakeStore:
         return {"ids": [r["Feedback_ID"] for r in self.rows],
                 "metadatas": [{k: v for k, v in r.items() if k != "Comment"} for r in self.rows]}
 
+    def delete(self, ids):
+        self.rows = [row for row in self.rows if row['Feedback_ID'] not in ids]
+
     def as_retriever(self, search_kwargs):
         """Return a synchronous retriever honoring equality and rating filters."""
         self.kwargs = search_kwargs

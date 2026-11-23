@@ -13,3 +13,5 @@ python-multipart
 instructor>=1.7
 httpx
 openpyxl>=3.1,<4
+
+phonenumbers>=9,<10

@@ -167,11 +167,16 @@ permissions independently and returns 403 for authenticated, unauthorized
 requests (401 for missing/expired credentials). Chat-only roles cannot obtain
 scores from SSE, saved chats, or evaluation endpoints.
 
-Use **＋ User** to create password-protected accounts. `users:create` permits
+Use **Settings → Manage users → ＋ User** to create password-protected accounts. `users:create` permits
 creating default USER accounts; assigning other roles also requires
 `roles:manage`. **Settings → Roles and permissions** creates custom named roles
 and toggles their permissions. **Manage users** lists accounts; updating roles,
 passwords or active status requires both `users:create` and `roles:manage`.
+ADMIN can remove strictly lower-privilege accounts in **Manage users**. Removal
+revokes sessions and deletes the account's saved chats; submitted feedback logs
+are retained. Self-removal, other ADMIN accounts, and roles with equal or greater
+permissions are protected. Uncheck **Active account** to immediately restrict
+sign-in without deleting history, or assign a role with fewer permissions.
 Default roles cannot be deleted. An assigned custom role must be reassigned
 before deletion. The last active ADMIN cannot be demoted or deactivated, and
 `roles:manage` cannot be removed from ADMIN. These operations use serialized
@@ -188,6 +193,50 @@ are replaced by sign-in. No profile or conversation data is deleted. Back up
 sessions use opaque random cookies with HttpOnly/SameSite=Strict and server-side
 expiry. HTTPS sets Secure cookies. Run behind HTTPS if exposing the service
 beyond the trusted local machine.
+
+### Sign-in and password recovery
+
+Sign in with an account name, email, or phone number. For local phone numbers,
+select the country using the searchable country/calling-code dropdown. Numbers
+are validated and stored in E.164 format; email addresses are trimmed and
+case-normalized. Recovery email and phone can be set while creating a user or
+in **Settings → Manage users**. Each contact can belong to only one account.
+
+**Forgot Password?** on the sign-in dialog has three steps: select email/phone,
+enter the received six-digit code, and enter/confirm a new password of at least
+12 characters. Codes expire after 10 minutes, allow five verification attempts,
+and can be used once. Requesting another code invalidates previous codes and
+verified reset grants across both contact methods. Completing a reset invalidates
+all sessions. Changing recovery contacts or resetting a password administratively
+also invalidates pending recovery codes. Recovery never reactivates disabled
+accounts. Request responses use the same generic message for known and unknown
+accounts. SQLite-backed limits allow five requests per contact and fifteen per
+IP per 10 minutes, thirty verification/sign-in attempts per IP, and fifteen reset
+completion attempts per IP. Rate-limit responses use HTTP 429 and Retry-After.
+
+With no provider configured, the sign-in recovery dialog shows a development
+banner and the backend console prints `PASSWORD RESET` with the destination
+and code. Codes are never returned by an API. For email delivery, configure
+`SMTP_HOST`, `SMTP_FROM`, optional `SMTP_USERNAME`/`SMTP_PASSWORD`, `SMTP_PORT`
+(default 587), and `SMTP_TLS` (`starttls`, `ssl` or `plain`). For SMS, configure
+`SMS_WEBHOOK_URL`, which receives a POST with `to` (E.164) and `message`; optional
+`SMS_WEBHOOK_TOKEN` is sent as a Bearer token. These settings are forwarded by
+Docker Compose; for native Uvicorn, export them in the server environment.
+Provider errors are logged while the public response remains generic.
+
+To explicitly clear accounts, chats, feedback, sessions and reset tokens and seed
+one clean ADMIN (leaving embedded and staged reviews intact):
+
+```bash
+venv/bin/python scripts/reset_users.py --confirm RESET-USERS
+# Set real recovery contacts when appropriate:
+# ... --email admin@example.com --phone '+64211234567' --country NZ
+```
+
+The script prints a newly generated password once and verifies name/email/phone
+sign-in. Default recovery contacts `admin@example.com` and `+12025550123` are demo
+values for console-mode testing; replace them before configuring external delivery.
+This destructive reset never runs automatically at startup.
 
 ### Pre-embedding data pipeline
 
@@ -216,11 +265,23 @@ failure can partially write the vector index; if a retry reports indexed IDs,
 remove those rows from staging before retrying. Embedding batches are limited
 to 500 rows.
 
+ADMIN accounts with `pipeline:manage` can use **Settings → Data Pipeline Management → Reset knowledge bank**
+to open an in-app confirmation dialog. Type `CONFIRM` and click **Reset knowledge
+bank** to permanently remove all embedded reviews. The
+reset shares the model lock with chat and ingestion, keeps the existing Chroma
+collection usable, and refreshes filters. The displayed conversation and evidence
+are cleared; saved historical chats remain available. New requests against an
+empty index return an explicit empty-knowledge-bank response without model or
+embedding calls. Staging data, source files, feedback
+logs and saved chats remain; an intentionally empty index stays empty on restart.
+A failed storage deletion may be partial; the error prompts a retry.
+
 ### Response feedback
 
 Accounts with `feedback:submit` see thumbs up/down beneath completed responses,
 including restored chats. Selecting a rating reveals an optional comment and
-Submit button. Failed/interrupted turns cannot receive feedback. Feedback is
+Submit and Cancel buttons. Cancel discards the draft and restores any previously
+saved rating and comment. Failed/interrupted turns cannot receive feedback. Feedback is
 saved in `response_feedback` in `data/chat_history.sqlite3`, with rating, comment,
 message ID (the saved turn ID), user ID, role at submission, and a UTC timestamp.
 A user can update their rating/comment; one record per response/user is retained.
@@ -235,11 +296,13 @@ Additional API endpoints (all except auth status/setup/login require sign-in):
 | `POST /api/auth/login`, `POST /api/auth/logout` | Start/end a browser session |
 | `GET /api/profiles` | Current account and permissions |
 | `GET/POST /api/users` | `users:create`; list/create accounts |
+| `DELETE /api/users/{id}` | ADMIN + `users:create`; remove strictly lower-privilege accounts |
 | `PATCH /api/users/{id}` | `users:create` + `roles:manage`; role/active/password updates |
 | `GET/POST /api/roles`, `PUT/DELETE /api/roles/{name}` | `roles:manage` |
 | `GET /api/pipeline` | `pipeline:manage`; staging preview |
 | `POST /api/pipeline/stage` | `pipeline:manage`; validated JSON/CSV/XLSX staging |
 | `POST /api/pipeline/query` | `pipeline:manage`; `{"sql":"SELECT ..."}` |
+| `POST /api/pipeline/reset` | ADMIN + `pipeline:manage`; `{ "confirmation": "CONFIRM" }` |
 | `POST /api/pipeline/embed` | `pipeline:manage`; embed and clear staging |
 | `POST /api/feedback` | `feedback:submit`; `{"message_id":"UUID","rating":"thumbs_up","comment":"optional"}` |
 

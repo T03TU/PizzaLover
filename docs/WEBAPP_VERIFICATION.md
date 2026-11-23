@@ -5,7 +5,7 @@ No review ingestion tests write to the production index.
 
 ## Automated checks
 
-- `venv/bin/python -m unittest discover -s tests -v`: 39 passing tests.
+- `venv/bin/python -m unittest discover -s tests -v`: 53 passing tests.
 - `node tests/test_sse_parser.cjs`: passes byte-by-byte UTF-8 chunks, split SSE
   frames, CRLF separators, evaluation heartbeat status, and termination events.
 - `node --check static/app.js`: passes.
@@ -22,7 +22,18 @@ deletion, failed/interrupted turns, and stale account requests from other tabs. 
 permissions, custom role creation/revocation, score redaction, migration,
 password/session handling and last-admin protection. Pipeline tests cover staging
 without embedding, SQL isolation, atomic rejection, validation, persistence and
-embedding failure. Feedback tests verify ownership, completion, metadata, rating
+embedding failure, confirmed ADMIN-only index reset and retained staging/chats.
+Password recovery tests cover normalized email/phone sign-in, console delivery,
+generic responses, expiration, resend, attempt limits, rate limits, single-use
+grants, password confirmation and session revocation. Seeding tests verify
+transactional user reset and immediate sign-in with each identifier.
+A real persistent Chroma regression removes 1,002 reviews across multiple batches,
+verifies empty retrieval after reopening, confirms a new query in an existing
+chat cannot retrieve deleted evidence or invoke generation, and checks that new
+data can be indexed afterward. Browser checks exercise the in-app reset dialog,
+cancellation, incorrect confirmation text and a new question after reset.
+User deletion tests verify privilege comparisons, account/chat deletion and session
+revocation. Feedback tests verify ownership, completion, metadata, rating
 updates and durable storage.
 
 The current feature checks use fake inference and temporary databases. Live
@@ -63,7 +74,12 @@ node tests/test_chat_ui.cjs
 # Or set PLAYWRIGHT_PATH to a separate installation's playwright module path.
 ```
 
-The test server seeds `Admin` / `admin-password-123` only in temporary storage.
+The test server seeds `Admin` / `admin-password-123` only in temporary storage,
+with `browser@example.com` and `+64211234567` for console-only recovery tests.
+`tests/test_recovery_ui.cjs` additionally tests email/phone recovery end to end,
+country search, incorrect codes, password confirmation, normalized sign-in and
+unknown-account confirmation. Run it with `SERVER_LOG` pointing at the temporary
+test server's captured console output; no code-reading test API is exposed.
 The optional `tests/test_chat_ui.cjs` browser regression runs in headless Chrome
 against `tests/ui_server.py`, which uses fake inference and temporary storage.
 It verifies password sign-in, user creation, account isolation, permissions in

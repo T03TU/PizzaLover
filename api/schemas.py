@@ -65,7 +65,8 @@ class GoogleIngestRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=80)
+    country: str = Field(default='NZ', pattern=r'^[A-Z]{2}$')
+    name: str = Field(min_length=1, max_length=254)
     password: str = Field(min_length=1, max_length=256)
 
 
@@ -76,11 +77,17 @@ class SetupRequest(LoginRequest):
 
 
 class UserCreateRequest(ProfileRequest):
+    email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=80)
+    country: str = Field(default='NZ', pattern=r'^[A-Z]{2}$')
     password: str = Field(min_length=12, max_length=256)
     role: str = Field(default='USER', pattern=r'^[A-Za-z0-9][A-Za-z0-9 _-]{0,49}$')
 
 
 class UserUpdateRequest(BaseModel):
+    email: str | None = Field(default=None, max_length=254)
+    phone: str | None = Field(default=None, max_length=80)
+    country: str = Field(default='NZ', pattern=r'^[A-Z]{2}$')
     model_config = ConfigDict(extra='forbid')
     role: str | None = Field(default=None, pattern=r'^[A-Za-z0-9][A-Za-z0-9 _-]{0,49}$')
     active: bool | None = None
@@ -103,3 +110,28 @@ class FeedbackRequest(BaseModel):
     message_id: UUID
     rating: Literal['thumbs_up', 'thumbs_down']
     comment: str = Field(default='', max_length=4000)
+
+
+class KnowledgeResetRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    confirmation: Literal['CONFIRM']
+
+
+class RecoveryRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    channel: Literal['email', 'phone']
+    identifier: str = Field(min_length=1, max_length=254)
+    country: str = Field(default='NZ', pattern=r'^[A-Z]{2}$')
+
+
+class RecoveryVerifyRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    request_id: UUID
+    code: str = Field(pattern=r'^[0-9]{6}$')
+
+
+class RecoveryCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    reset_token: str = Field(min_length=20, max_length=200)
+    password: str = Field(min_length=12, max_length=256)
+    confirm_password: str = Field(min_length=12, max_length=256)

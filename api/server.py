@@ -21,10 +21,12 @@ from pydantic import ValidationError
 
 import config
 from api.schemas import (ChatRequest, GoogleIngestRequest, RagasScores, Review, LoginRequest,
-                         SetupRequest, UserCreateRequest, UserUpdateRequest, RoleRequest, SQLRequest, FeedbackRequest)
+                         SetupRequest, UserCreateRequest, UserUpdateRequest, RoleRequest, SQLRequest, FeedbackRequest, KnowledgeResetRequest, RecoveryRequest, RecoveryVerifyRequest, RecoveryCompleteRequest)
 from src.chat_history import ChatHistory
 from src.access import Access, PERMISSIONS
 from src.pipeline import Pipeline
+from src.recovery import Recovery, RateLimited, delivery_modes
+from src.contacts import countries
 
 logger = logging.getLogger(__name__)
 STATIC_DIR = config.PROJECT_ROOT / "static"
@@ -53,6 +55,7 @@ async def lifespan(app):
     app.state.model_lock = asyncio.Lock()
     app.state.chat_history = await asyncio.to_thread(ChatHistory, config.CHAT_HISTORY_PATH)
     app.state.access = await asyncio.to_thread(Access, app.state.chat_history)
+    app.state.recovery = await asyncio.to_thread(Recovery, app.state.chat_history)
     app.state.pipeline = await asyncio.to_thread(Pipeline, config.STAGING_PATH)
     app.state.pipeline_lock = asyncio.Lock()
     if await asyncio.to_thread(app.state.access.setup_required):
@@ -121,7 +124,7 @@ async def authorize_request(request: Request, call_next):
             origin = request.headers.get('origin')
             if origin and origin != str(request.base_url).rstrip('/'):
                 return JSONResponse({'detail': 'Cross-origin requests are forbidden'}, status_code=403)
-        public = path in ('/api/auth/status', '/api/auth/setup', '/api/auth/login')
+        public = path in ('/api/auth/status', '/api/auth/setup', '/api/auth/login', '/api/auth/recovery/options', '/api/auth/recovery/request', '/api/auth/recovery/verify', '/api/auth/recovery/complete')
         if not public:
             try:
                 user = await current_profile(request)
@@ -177,12 +180,55 @@ async def setup(body: SetupRequest, request: Request, response: Response):
 @app.post('/api/auth/login')
 async def login(body: LoginRequest, request: Request, response: Response):
     try:
-        user = await asyncio.to_thread(request.app.state.access.login, body.name.strip(), body.password)
+        await asyncio.to_thread(request.app.state.recovery.login_limit, request.client.host if request.client else 'local')
+    except RateLimited as exc:
+        raise HTTPException(429, str(exc), headers={'Retry-After': '600'}) from exc
+    try:
+        user = await asyncio.to_thread(request.app.state.access.login, body.name.strip(), body.password, body.country)
     except PermissionError as exc:
         raise HTTPException(401, str(exc)) from exc
     token = await asyncio.to_thread(request.app.state.access.session, user['id'])
     set_profile_cookie(response, token, request)
     return user
+
+
+@app.get('/api/auth/recovery/options')
+async def recovery_options():
+    return {'countries': countries(), 'delivery': delivery_modes()}
+
+
+@app.post('/api/auth/recovery/request')
+async def recovery_request(body: RecoveryRequest, request: Request):
+    try:
+        return await finish_thread(request.app.state.recovery.request, body.channel, body.identifier,
+                                   body.country, request.client.host if request.client else 'local')
+    except RateLimited as exc:
+        raise HTTPException(429, str(exc), headers={'Retry-After': '600'}) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+@app.post('/api/auth/recovery/verify')
+async def recovery_verify(body: RecoveryVerifyRequest, request: Request):
+    try:
+        return await finish_thread(request.app.state.recovery.verify, str(body.request_id), body.code,
+                                   request.client.host if request.client else 'local')
+    except RateLimited as exc:
+        raise HTTPException(429, str(exc), headers={'Retry-After': '600'}) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post('/api/auth/recovery/complete')
+async def recovery_complete(body: RecoveryCompleteRequest, request: Request):
+    if body.password != body.confirm_password:
+        raise HTTPException(422, 'Passwords do not match')
+    try:
+        return await finish_thread(request.app.state.recovery.complete, body.reset_token, body.password, request.client.host if request.client else 'local')
+    except RateLimited as exc:
+        raise HTTPException(429, str(exc), headers={'Retry-After': '600'}) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 @app.post('/api/auth/logout', status_code=204)
@@ -205,7 +251,7 @@ async def create_profile(body: UserCreateRequest, request: Request):
     if body.role != 'USER' and 'roles:manage' not in user['permissions']:
         raise HTTPException(403, 'roles:manage is required to assign roles')
     try:
-        return await asyncio.to_thread(request.app.state.access.create_user, body.name, body.password, body.role)
+        return await asyncio.to_thread(request.app.state.access.create_user, body.name, body.password, body.role, body.email, body.phone, body.country)
     except (ValueError, sqlite3.IntegrityError) as exc:
         raise access_error(exc) from exc
 
@@ -229,6 +275,15 @@ async def update_user(user_id: UUID, body: UserUpdateRequest, request: Request):
     try:
         return await asyncio.to_thread(request.app.state.access.update_user, str(user_id), changes)
     except (KeyError, ValueError, sqlite3.IntegrityError) as exc:
+        raise access_error(exc) from exc
+
+
+@app.delete('/api/users/{user_id}', status_code=204)
+async def remove_user(user_id: UUID, request: Request):
+    actor = await current_profile(request)
+    try:
+        await finish_thread(request.app.state.access.remove_user, actor['id'], str(user_id))
+    except (PermissionError, KeyError, ValueError) as exc:
         raise access_error(exc) from exc
 
 
@@ -335,15 +390,20 @@ async def chat(body: ChatRequest, request: Request):
         """Produce a single turn, with SSE heartbeats during lengthy judge work."""
         try:
             async with request.app.state.model_lock:
-                retriever = get_retriever(vector_store=engine.store, **body.filters.model_dump())
-                docs = await finish_thread(retriever.invoke, body.question)
+                indexed = await finish_thread(engine.store.get, limit=1, include=[])
+                if indexed['ids']:
+                    retriever = get_retriever(vector_store=engine.store, **body.filters.model_dump())
+                    docs = await finish_thread(retriever.invoke, body.question)
+                else:
+                    docs = []
                 citations = [dict(doc.metadata, Comment=doc.page_content) for doc in docs]
                 turn["citations"] = citations
                 yield event("citations", citations)
                 start = perf_counter()
                 answer = ""
                 if not docs:
-                    answer = "No reviews match these filters. Try broadening your search."
+                    answer = ("No reviews match these filters. Try broadening your search." if indexed["ids"] else
+                              "The knowledge bank is empty. Stage and embed new reviews in Data Pipeline Management before asking questions.")
                     turn["text"] = answer
                     yield event("token", answer)
                 else:
@@ -509,6 +569,27 @@ async def ingest_google(body: GoogleIngestRequest, request: Request):
                 logger.exception("Google review ingestion failed")
                 raise HTTPException(503, "Embedding or storage failed; check Ollama and retry") from exc
     return {"added": len(fresh), "duplicates": len(reviews) - len(fresh), "places": places, "skipped": skipped}
+
+
+@app.post('/api/pipeline/reset')
+async def reset_knowledge(body: KnowledgeResetRequest, request: Request):
+    actor = await current_profile(request)
+    if actor['role'] != 'ADMIN':
+        raise HTTPException(403, 'Only ADMIN can reset the knowledge bank')
+    async with request.app.state.model_lock:
+        def clear_index():
+            store = request.app.state.engine.store
+            try:
+                ids = store.get(include=[])['ids']
+                for offset in range(0, len(ids), 500):
+                    store.delete(ids=ids[offset:offset + 500])
+                if store.get(include=[])['ids']:
+                    raise RuntimeError('Embedded reviews remain after reset')
+            except Exception as exc:
+                logger.exception('Knowledge bank reset failed')
+                raise HTTPException(503, 'Reset failed and may be partial. Check storage and retry.') from exc
+            return {'removed': len(ids)}
+        return await finish_thread(clear_index)
 
 
 @app.get('/api/pipeline')

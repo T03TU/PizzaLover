@@ -22,7 +22,6 @@
 <div class="profile-control">
 <label for="profile">Account</label>
 <select id="profile" aria-describedby="profile-help" disabled><option>Loading…</option></select>
-<button id="add-profile" class="subtle" disabled>＋ User</button>
 </div>
 <button id="settings" class="subtle" disabled>Settings</button>
 <button id="sign-out" class="subtle" disabled>Sign out</button>
@@ -195,6 +194,9 @@
 <input id="profile-name" required maxlength="80" autocomplete="off">
 <label for="profile-password">Password (at least 12 characters)</label>
 <input id="profile-password" type="password" minlength="12" maxlength="256" required autocomplete="new-password">
+<label for="profile-email">Recovery email (optional)</label><input id="profile-email" type="email" maxlength="254" autocomplete="off">
+<div id="profile-country-fields"></div>
+<label for="profile-phone">Recovery phone (optional)</label><input id="profile-phone" type="tel" maxlength="80" autocomplete="off">
 <label for="profile-role">Role</label><select id="profile-role"><option>USER</option></select>
 <p id="profile-error" role="alert"></p>
 <div class="mapping-actions"><button type="button" id="profile-cancel" class="secondary">Cancel</button>
@@ -206,10 +208,34 @@
 <h2 id="auth-title">Sign in</h2>
 <p id="auth-help" class="small muted">Use your account name and password.</p>
 <div id="setup-fields" hidden><label for="setup-token">Setup token from the server console</label><input id="setup-token" autocomplete="off"></div>
-<label for="auth-name">Account name</label><input id="auth-name" maxlength="80" required autocomplete="username">
+<div id="auth-method-fields"><label for="auth-method">Sign in using</label><select id="auth-method"><option value="account">Account name or email</option><option value="phone">Phone number</option></select></div>
+<div id="auth-country-fields" hidden></div>
+<label id="auth-name-label" for="auth-name">Account name or email</label><input id="auth-name" maxlength="254" required autocomplete="username">
 <label for="auth-password">Password</label><input id="auth-password" type="password" maxlength="256" required autocomplete="current-password">
-<p id="auth-error" role="alert"></p><button class="secondary" type="submit">Continue</button>
+<p id="auth-notice" role="status"></p><p id="auth-error" role="alert"></p><button class="secondary" type="submit">Continue</button><button id="forgot-password" type="button" class="text-button">Forgot Password?</button>
 </form>
+</dialog>
+<dialog id="recovery-dialog" aria-labelledby="recovery-title">
+<h2 id="recovery-title">Reset password</h2>
+<p id="recovery-dev" class="small muted" role="status" hidden>Development mode: verification codes are printed in the backend console.</p>
+<form id="recovery-request-form">
+<label for="recovery-channel">Recover using</label><select id="recovery-channel"><option value="email">Email address</option><option value="phone">Phone number</option></select>
+<div id="recovery-country-fields" hidden></div>
+<label id="recovery-identifier-label" for="recovery-identifier">Email address</label><input id="recovery-identifier" type="email" maxlength="254" autocomplete="email" required>
+<button class="secondary" type="submit">Send verification code</button>
+</form>
+<form id="recovery-verify-form" hidden>
+<p id="recovery-confirmation" role="status"></p>
+<label for="recovery-code">Verification code</label><input id="recovery-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+<p class="small muted">The code expires in 10 minutes. Requesting a new code invalidates the previous one.</p>
+<button class="secondary" type="submit">Verify code</button><button id="recovery-resend" type="button" class="text-button">Request a new code</button>
+</form>
+<form id="recovery-password-form" hidden>
+<label for="recovery-password">New password (at least 12 characters)</label><input id="recovery-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required>
+<label for="recovery-confirm-password">Confirm new password</label><input id="recovery-confirm-password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required>
+<button class="secondary" type="submit">Set new password</button>
+</form>
+<p id="recovery-error" role="alert"></p><button id="recovery-cancel" class="secondary" type="button">Back to sign in</button>
 </dialog>
 <dialog id="settings-dialog" aria-labelledby="settings-title">
 <h2 id="settings-title">Settings</h2><p id="account-summary"></p>
@@ -229,7 +255,20 @@
 <p class="small muted">SELECT, INSERT, UPDATE and DELETE are allowed only on staging_reviews. Example: UPDATE staging_reviews SET Franchise = trim(Franchise);</p>
 <button id="run-sql" class="secondary" type="submit">Run SQL</button></form>
 <p id="pipeline-status" role="status"></p><div id="pipeline-results" class="table-scroll" tabindex="0" aria-label="SQL results"></div>
+<button id="reset-knowledge" class="secondary" hidden>Reset knowledge bank</button>
+<p id="reset-status" role="status"></p>
 <div class="mapping-actions"><button id="embed-staged" class="secondary">Generate embeddings</button><button class="secondary" data-close="pipeline-dialog">Close</button></div>
+</dialog>
+<dialog id="reset-knowledge-dialog" aria-labelledby="reset-knowledge-title">
+<form id="reset-knowledge-form">
+<h2 id="reset-knowledge-title">Reset knowledge bank</h2>
+<p>Are you sure? All embedded reviews will be permanently removed from the chatbot.</p>
+<p class="small muted">Saved chats and staging data remain. Old chat responses are historical records.</p>
+<label for="reset-confirmation">Confirm by typing CONFIRM</label>
+<input id="reset-confirmation" autocomplete="off" spellcheck="false" required>
+<p id="reset-dialog-status" role="status"></p>
+<div class="mapping-actions"><button id="reset-cancel" type="button" class="secondary">Cancel</button><button id="reset-confirm" type="submit" class="secondary" disabled>Reset knowledge bank</button></div>
+</form>
 </dialog>
 <dialog id="roles-dialog" aria-labelledby="roles-title">
 <h2 id="roles-title">Roles and permissions</h2>
@@ -240,7 +279,8 @@
 <p id="role-status" role="status"></p><button class="secondary" data-close="roles-dialog">Close</button>
 </dialog>
 <dialog id="users-dialog" aria-labelledby="users-title">
-<h2 id="users-title">Manage users</h2><p class="small muted">Role, password and active status changes require roles:manage. Set passwords for migrated accounts here.</p>
+<h2 id="users-title">Manage users</h2><p class="small muted">Role, password and active status changes require roles:manage. Set passwords for migrated accounts here. Uncheck Active account to block sign-in immediately, or assign a role with fewer permissions. Removing an account also deletes its saved chats.</p>
+<button id="add-profile" class="subtle" disabled>＋ User</button>
 <div id="users-list"></div><p id="users-status" role="status"></p>
 <button class="secondary" data-close="users-dialog">Close</button>
 </dialog>
